@@ -1329,7 +1329,10 @@ class SmaliScoutCore:
         # Run DFA for variable naming (TrackingEngine)
         dfa_results = self.tracking_engine.taint.analyze_method(body)
 
-        translation = self.semantic_engine.translate_method(body, dfa_results, self.inheritance_engine)
+        # Convert Set to List for type compatibility
+        dfa_list_results = {k: list(v) for k, v in dfa_results.items()} if dfa_results else None
+
+        translation = self.semantic_engine.translate_method(body, dfa_list_results, self.inheritance_engine)
         print(f"\n# Semantic Translation (DFA Optimized) for {sig}:\n")
         print(translation)
         print("\n" + "="*20 + "\n")
@@ -1782,7 +1785,7 @@ class SmaliScoutCore:
 
         # Adicionar arestas (chamadas)
         edges = set()
-        for caller, callees in self.xref_engine.method_callees.items():
+        for caller, callees in self.tracking_engine.xref.method_callees.items():
             for callee in callees:
                 if callee.startswith("L") and "->" in callee:
                     callee_class = callee.split("->")[0]
@@ -2481,7 +2484,7 @@ def main():
             if args.dry_run:
                 _preview_hook(args.hook, core)
             else:
-                core.patch_atomic(args.hook)
+                core.patch_method(args.hook)
                 should_save_report = True
 
         if args.frida:
