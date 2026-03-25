@@ -1,31 +1,148 @@
-# SmaliScoutAI v19 - Systemic Edition 🕵️‍♂️⚙️💎
+# Scout Forensic Toolkit
 
-**Universal Smali Intelligence & Bytecode Engineering Framework.**
+Scout is a technical framework for Android static analysis, security auditing, and bytecode instrumentation. It provides automated tools for inspecting Smali bytecode, reconstructing control flow, and performing data-flow analysis.
 
-SmaliScoutAI is a professional-grade Android reverse engineering toolkit designed for automated forensic analysis, security auditing, and safe bytecode injection. It is structurally optimized for **AI Agent Interoperability**.
+## Architecture Overview
 
-## 🚀 Key AI-Native Features
-- **Atomic Transactional Patching:** Uses `os.replace` for OS-level atomic file swaps. 0% risk of file corruption.
-- **Global Class Indexer:** Instant FQDN resolution (`Lclass;`) across all dex folders (`smali_classes1..N`) with numeric-aware sorting.
-- **Memory-Safe LRU Cache:** Capable of scanning 100k+ classes without OOM (Out of Memory) errors.
-- **Deep Manifest Recon:** Unified reconnaissance of Android surfaces, capturing both explicit and implicit (Intent-Filter) entry points.
-- **Parametric Frida Generator:** Automatic generation of overloaded Frida hooks for complex JVM signatures.
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        SmaliScout CLI                           │
+│                  (smali_scout.py - 2405 lines)                 │
+└─────────────────────┬───────────────────────────────────────────┘
+                      │
+        ┌─────────────┼─────────────┬─────────────┬─────────────┐
+        ▼             ▼             ▼             ▼             ▼
+┌──────────────┐ ┌──────────┐ ┌───────────┐ ┌──────────┐ ┌──────────┐
+│   Tracking   │ │  CFG     │ │ Semantic  │ │ Inheritance│ │  Frida  │
+│   Engine     │ │ Engine   │ │ Engine    │ │ Engine    │ │ Engine  │
+│  (XREF+Taint)│ │ (CFG)    │ │(Translate)│ │(BFS Hier.)│ │(Hooks)  │
+└──────────────┘ └──────────┘ └───────────┘ └──────────┘ └──────────┘
+        │             │             │             │             │
+        └─────────────┼─────────────┼─────────────┼─────────────┘
+                      ▼             ▼             ▼
+              ┌──────────────┐ ┌──────────┐ ┌──────────┐
+              │ UI Engine    │ │ Reasoning │ │ Behavior │
+              │(UI Tracing)  │ │ Engine    │ │ Engine   │
+              └──────────────┘ └──────────┘ └──────────┘
+                               │
+                               ▼
+              ┌────────────────────────────────┐
+              │     ScoutKnowledge (SQLite)    │
+              │   (Framework + DFA Hints)      │
+              └────────────────────────────────┘
+```
 
-## 🛠️ CLI Usage (AI Master Protocol)
-| Flag | Target | AI Purpose |
-| :--- | :--- | :--- |
-| `--manifest` | None | Map the application attack surface (Activities, Services, Providers). |
-| `--scan all` | {vuln, crypto} | Bulk audit for security flaws and cryptographic algorithms. |
-| `--brain` | `Lclass;` | Deep I/O flow analysis and API fingerprinting of a specific class. |
-| `--hook` | `Lclass;->method()` | Transactional bytecode injection using established templates. |
-| `--frida` | `Lclass;->method()` | Generate a ready-to-use `.js` hook script for dynamic analysis. |
-| `--export` | None | Output the full audit trail into `smaliscout_sys_v19.json`. |
+## Engine Specifications
 
-## 🏗️ System Architecture
-1. **Core:** Python 3.x using `pathlib` and `ET` (XML).
-2. **Persistence:** Centralized `report_data` dictionary exported as JSON.
-3. **Safety:** Automatic timestamped backups (`.bak_YYYYMMDD_HHMMSS`) before any modification.
-4. **Performance:** Multi-threaded indexing (`ThreadPoolExecutor`) + LRU Cache Strategy.
+### 1. TrackingEngine (`tracking_engine.py`)
+- **XREFEngine**: Cross-reference indexing with pickle persistence
+- **TaintEngine**: Register-based data flow analysis
+- **Priority**: SOURCE > FIELD > CONST > SINK
 
----
-*Created by Antigravity v19 - Engineered for the next generation of Reverse Engineering Agents.*
+### 2. CFGEngine (`cfg_engine.py`)
+- Builds basic blocks from method bodies
+- Handles exceptions, switches, branches
+- Exports to DOT format
+
+### 3. SemanticEngine (`semantic_engine.py`)
+- Translates Smali to Python-like pseudocode
+- Statement folding for readability
+- Try-catch reconstruction
+
+### 4. InheritanceEngine (`inheritance_engine.py`)
+- BFS for hierarchy resolution
+- Interface-to-interface tracking
+- Caching for performance
+
+### 5. FridaEngine (`frida_engine.py`)
+- Generates Java hooks with overload support
+- Argument inference via DFA
+- Constructor detection ($init)
+
+### 6. UIEngine (`ui_engine.py`)
+- Resource ID mapping (public.xml / R.smali)
+- Layout-to-code tracing
+- Event handler discovery
+
+### 7. BehaviorEngine (`behavior_engine.py`)
+- Fingerprint-based detection
+- Taint flow correlation
+- High-confidence behavioral analysis
+
+### 8. ReasoningEngine (`reasoning_engine.py`)
+- Cross-engine correlation
+- AI-ready summary generation
+
+## Operational Capabilities
+
+- **Atomic Bytecode Patching:** Safe modification of Smali files using transactional OS-level operations.
+- **Forensic Indexing:** High-performance indexing of multi-dex environments with "First-Match" priority resolution (Android parity).
+- **Interface-Aware Analysis:** Recursive tracking of class hierarchies and implemented interfaces for deep forensic markers.
+- **UI-to-Code Tracing:** Dual-mode resource mapping via `public.xml` or `R.smali` fallback for production APKs.
+- **Cross-Reference Analysis:** Recursive tracking of method invocation and field access chains.
+- **Semantic Reconstruction:** Translation of flat bytecode into structured, taint-aware pseudocode.
+- **Advanced Taint Tracking:** Support for string and integer constant propagation (`const`, `const/4`, etc.).
+- **Manifest Forensics:** Automated identification of risky permissions and persistent malware triggers.
+- **Frida Bridge:** Automated generation of Java-layer instrumentation scripts with constructor support ($init).
+
+## Command Line Interface
+
+| Option | Function |
+| :--- | :--- |
+| `--manifest` | Audit entry points, permissions, and security flags in AndroidManifest.xml. |
+| `--scan all` | Execute static analysis rules (vulnerabilities, hardcoded secrets). |
+| `--brain` | Generate a technical profile of a target class and its inheritance. |
+| `--hook` | Inject instrumentation hooks into target methods. |
+| `--frida` | Produce Frida instrumentation scripts with inferred argument naming. |
+| `--xref` | Map method call chains and field usage. |
+| `--cfg` | Export control-flow graphs in DOT format. |
+| `--translate` | Translate Smali method to pseudocode. |
+| `--ui-trace` | Trace UI elements to code handlers. |
+| `--reason` | Generate AI reasoning summary. |
+| `--resource-map` | Show resource ID mappings. |
+| `--find-resource` | Find specific resource ID usage. |
+| `--search` | Generic regex search. |
+| `--patch-manifest` | Modify AndroidManifest flags. |
+| `--generate-hook-class` | Generate ScoutHook.smali. |
+| `--graph` | Export class dependency graph. |
+| `--export` | Serialize analysis results to JSON format. |
+
+## Known Limitations
+
+- **Regex-based analysis**: Not a full AST parser
+- **No dynamic analysis**: Static-only
+- **Multidex ambiguity**: First-match resolution may not always match runtime
+- **16KB header assumption**: Class parsing assumes .class/.super in first 16KB
+
+## Deployment & Verification
+
+The toolkit is designed for integration into CI/CD pipelines and professional security workflows. Verification is conducted via the included comprehensive test suite:
+
+```bash
+python3 -m unittest discover tests/
+```
+
+Or with pytest:
+
+```bash
+pytest tests/ -v
+```
+
+## File Structure
+
+```
+scout/
+├── smali_scout.py          # Main CLI (2405 lines)
+├── tracking_engine.py       # XREF + Taint analysis
+├── cfg_engine.py           # Control flow graphs
+├── semantic_engine.py       # Pseudocode translation
+├── inheritance_engine.py   # Hierarchy resolution
+├── frida_engine.py         # Hook generation
+├── ui_engine.py            # UI tracing
+├── behavior_engine.py      # Behavioral fingerprints
+├── reasoning_engine.py     # AI summaries
+├── scout_knowledge.py      # SQLite knowledge base
+├── tests/                 # Test suite (25+ files)
+├── README.md              # This file
+└── HEURISTICS.md          # Analysis protocols
+```
