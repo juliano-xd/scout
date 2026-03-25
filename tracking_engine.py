@@ -179,6 +179,8 @@ class TaintEngine:
     def analyze_method(self, body: List[str]) -> Dict[str, Set[str]]:
         track_map = defaultdict(set)
         field_map = defaultdict(set)
+        # Bug #9 fix: Initialize last_invoke_sig to avoid UnboundLocalError
+        last_invoke_sig = None
 
         for line in body:
             line = line.strip()

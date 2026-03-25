@@ -866,7 +866,9 @@ class SmaliScanner:
             if val.isdigit():
                 h = hex(int(val))
                 return f"-{h}" if is_negative else h
-        except: pass
+        except (ValueError, TypeError):
+            # Bug #1 fix: Catch specific exceptions instead of bare except
+            pass
         
         res = "0x" + val if not val.startswith("0x") else val
         return f"-{res}" if is_negative else res
