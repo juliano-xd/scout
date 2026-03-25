@@ -243,8 +243,11 @@ class TaintEngine:
         
         return {k: v for k, v in track_map.items() if v}
 
-    def suggest_name(self, reg: str, history: Set[str]) -> str:
+    def suggest_name(self, reg: str, history) -> str:
         # Priority-based naming: Sources > Fields > Sinks
+        # Bug #12 fix: Accept both Set[str] and List[str]
+        if not isinstance(history, (set, list)):
+            history = set()
         for h in history:
             if "URL" in h: return f"url_{reg}"
         for h in history:
