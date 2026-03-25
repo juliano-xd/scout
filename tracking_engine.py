@@ -115,8 +115,12 @@ class XREFEngine:
     def _analyze_class(self, class_name: str, path: Path) -> Optional[Dict]:
         content = self.file_cache.get(path)
         if not content:
-            try: content = path.read_text(encoding="utf-8", errors="ignore"); self.file_cache.put(path, content)
-            except: return None
+            try:
+                content = path.read_text(encoding="utf-8", errors="ignore")
+                self.file_cache.put(path, content)
+            except (IOError, OSError, PermissionError, UnicodeDecodeError):
+                # Bug #15 fix: Catch specific exceptions instead of bare except
+                return None
 
         data = {"class": class_name, "calls": set(), "refs": set(), "fields": set()}
         for line in content.splitlines():
