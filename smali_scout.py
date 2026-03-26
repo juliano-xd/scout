@@ -22,6 +22,9 @@ from ui_engine import UIEngine
 from reasoning_engine import ReasoningEngine
 from semantic_engine import SemanticEngine
 from behavior_engine import BehaviorEngine
+from variable_flow_tracker import VariableFlowTracker
+from obfuscation_engine import ObfuscationDetector
+from advanced_tracking_engine import AdvancedTrackingEngine
 
 # JSON Schema for Scout reports (for AI validation)
 SCOUT_SCHEMA = {
@@ -975,13 +978,8 @@ class SmaliScoutCore:
         self.smali_dirs = self._get_numeric_smali_dirs()
         self.manifest_path = self._find_manifest()
 
-        self.report = {
-            "timestamp": datetime.now().isoformat(),
-            "target": str(self.root_dir),
-            "stats": {"classes": 0},
-            "findings": {},
-        }
-
+        self.report = self._init_enhanced_report()
+        
         self.class_index = defaultdict(list)
         self.file_cache = LRUCache(capacity=cache_size)
         self.scanner_threads = scanner_threads
@@ -1017,6 +1015,61 @@ class SmaliScoutCore:
             return int(m.group(1)) if m else 0
 
         return sorted(dirs, key=_nk)
+
+    def _init_enhanced_report(self) -> Dict[str, Any]:
+        """Inicializa relatório estruturado e detalhado."""
+        return {
+            "metadata": {
+                "timestamp": datetime.now().isoformat(),
+                "generator": "SmaliScout v3.0",
+                "target": str(self.root_dir),
+                "apk_info": self._extract_apk_info(),
+            },
+            "stats": {
+                "classes": 0,
+                "methods": 0,
+                "fields": 0,
+                "dex_files": len(self.smali_dirs) if hasattr(self, 'smali_dirs') else 0,
+            },
+            "summary": {
+                "risk_level": "unknown",
+                "critical_findings": 0,
+                "high_findings": 0,
+                "medium_findings": 0,
+                "low_findings": 0,
+                "info_findings": 0,
+            },
+            "findings": {},
+            "analysis_timeline": [],
+            "risk_matrix": {
+                "credentials": {"count": 0, "severity": "none", "locations": []},
+                "pii": {"count": 0, "severity": "none", "locations": []},
+                "network": {"count": 0, "severity": "none", "locations": []},
+                "crypto": {"count": 0, "severity": "none", "locations": []},
+                "obfuscation": {"count": 0, "severity": "none", "locations": []},
+                "permissions": {"count": 0, "severity": "none", "locations": []},
+            },
+            "executive_summary": "",
+            "recommendations": [],
+        }
+
+    def _extract_apk_info(self) -> Dict[str, Any]:
+        """Extrai informações do APK se disponível."""
+        info = {"package": None, "version": None, "permissions": []}
+        
+        if self.manifest_path:
+            try:
+                tree = ET.parse(self.manifest_path)
+                root = tree.getroot()
+                info["package"] = root.get("package")
+                info["version"] = root.get("{http://schemas.android.com/apk/res/android}versionCode")
+                
+                uses_perms = root.findall(".//uses-permission")
+                info["permissions"] = [p.get("{http://schemas.android.com/apk/res/android}name") for p in uses_perms]
+            except Exception:
+                pass
+        
+        return info
 
     def _find_manifest(self):
         for p in self.root_dir.rglob("AndroidManifest.xml"):
@@ -1250,9 +1303,15 @@ class SmaliScoutCore:
         else:
             logger.error("[ERROR] Injection point not found.")
 
-    def gen_frida(self, sig):
+    def gen_frida(self, sig, machine_json: bool = False):
         body = self._get_method_body(sig)
-        return self.frida_engine.write_hook(sig, method_body=body)
+        result = self.frida_engine.write_hook(sig, method_body=body)
+        
+        if machine_json:
+            import json
+            print(json.dumps({"signature": sig, "hook_script": result}, ensure_ascii=False))
+        
+        return result
 
     def _get_method_body(self, sig: str) -> Optional[List[str]]:
         """Extrai as linhas do corpo de um método Smali."""
@@ -1322,7 +1381,7 @@ class SmaliScoutCore:
         print("="*40 + "\n")
         self.report["findings"]["security_insights"] = summary
 
-    def translate_semantic(self, sig: str):
+    def translate_semantic(self, sig: str, machine_json: bool = False):
         """Translates a Smali method into high-level pseudocode with DFA-aware naming."""
         body = self._get_method_body(sig)
         if not body:
@@ -1335,17 +1394,80 @@ class SmaliScoutCore:
         dfa_list_results = {k: list(v) for k, v in dfa_results.items()} if dfa_results else None
 
         translation = self.semantic_engine.translate_method(body, dfa_list_results, self.inheritance_engine)
-        print(f"\n# Semantic Translation (DFA Optimized) for {sig}:\n")
-        print(translation)
-        print("\n" + "="*20 + "\n")
         
-        self.report["findings"]["semantic_translation"] = {
+        result = {
             "signature": sig,
-            "pseudocode": translation
+            "pseudocode": translation,
+            "dfa_info": dfa_list_results
         }
         
-        # Opcional: tentar gerar PNG se dot estiver disponível
-        # os.system(f"dot -Tpng {out_file} -o {out_file}.png")
+        if machine_json:
+            import json
+            print(json.dumps(result, ensure_ascii=False))
+        else:
+            print(f"\n# Semantic Translation (DFA Optimized) for {sig}:\n")
+            print(translation)
+            print("\n" + "="*20 + "\n")
+        
+        self.report["findings"]["semantic_translation"] = result
+
+    def track_variable_flow(self, method_sig: str, variable: str = "p2", max_depth: int = 10, machine_json: bool = False, output_format: str = None):
+        """Rastreia o fluxo de uma variável específica através de métodos."""
+        import json
+        from variable_flow_tracker import generate_variable_flow_graph, generate_variable_flow_mermaid
+        
+        tracker = VariableFlowTracker(
+            class_index=self.class_index,
+            file_cache=self.file_cache,
+            inheritance_engine=self.inheritance_engine,
+            xref_engine=self.tracking_engine.xref,
+            max_depth=max_depth
+        )
+        
+        if "->" not in method_sig:
+            logger.error(f"[TRACK-VAR] Invalid method signature: {method_sig}")
+            return None
+        
+        class_sig = method_sig.split("->")[0]
+        if not class_sig.endswith(";"):
+            class_sig += ";"
+        method_only = method_sig.split("->")[1]
+        
+        result = tracker.track_variable(class_sig, method_only, variable)
+        
+        if output_format == "dot":
+            dot_output = generate_variable_flow_graph(result)
+            output_file = f"flow_{variable}_{method_only.split('(')[0]}.dot"
+            Path(output_file).write_text(dot_output, encoding="utf-8")
+            logger.info(f"[TRACK-VAR] DOT graph saved to {output_file}")
+            print(dot_output)
+        elif output_format == "mermaid":
+            mermaid_output = generate_variable_flow_mermaid(result)
+            print(mermaid_output)
+        elif machine_json:
+            print(json.dumps(result, ensure_ascii=False))
+        else:
+            print(f"\n=== Variable Flow Report ===")
+            print(f"Target: {method_sig}")
+            print(f"Variable: {variable}")
+            print(f"Max Depth: {max_depth}")
+            print("=" * 30)
+            print(json.dumps(result, indent=2))
+            
+            if output_format == "both":
+                dot_output = generate_variable_flow_graph(result)
+                dot_file = f"flow_{variable}_{method_only.split('(')[0]}.dot"
+                Path(dot_file).write_text(dot_output, encoding="utf-8")
+                
+                mermaid_output = generate_variable_flow_mermaid(result)
+                mermaid_file = f"flow_{variable}_{method_only.split('(')[0]}.md"
+                Path(mermaid_file).write_text(mermaid_output, encoding="utf-8")
+                
+                logger.info(f"[TRACK-VAR] DOT graph: {dot_file}")
+                logger.info(f"[TRACK-VAR] Mermaid diagram: {mermaid_file}")
+        
+        self.report["findings"]["variable_flow"] = result
+        return result
 
     def scan_unified(self, scope):
         logger.info(f"[SCAN] Scope: {scope}")
@@ -1592,7 +1714,7 @@ class SmaliScoutCore:
         except Exception as e:
             logger.error(f"[MANIFEST] Failed to parse manifest: {e}")
 
-    def brain(self, query):
+    def brain(self, query, machine_json: bool = False):
         path = self.resolve(query)
         if not path:
             return logger.error(f"[ERROR] Unresolved: {query}")
@@ -1602,11 +1724,22 @@ class SmaliScoutCore:
             r"invoke-.* ([L](?:android|java|javax|okhttp|com/google|com/facebook)[^;]+;->[a-zA-Z0-9<>\$-]+)"
         )
         top = Counter(api_p.findall(content)).most_common(5)
-
-        logger.info(f"[BRAIN] {query}")
-        for a, c in top:
-            logger.info(f" - {a} ({c}x)")
-
+        
+        result = {
+            "query": query,
+            "class": query,
+            "top_api_calls": [{"api": a, "count": c} for a, c in top],
+            "total_unique_apis": len(set(api_p.findall(content)))
+        }
+        
+        if machine_json:
+            import json
+            print(json.dumps(result, ensure_ascii=False))
+        else:
+            logger.info(f"[BRAIN] {query}")
+            for a, c in top:
+                logger.info(f" - {a} ({c}x)")
+        
         self.report["findings"]["brain"] = {query: top}
         if self.progress_reporter.callback:
             self.progress_reporter.callback(
@@ -1801,12 +1934,94 @@ class SmaliScoutCore:
         logger.info(f"[GRAPH] DOT file written to {output_path}")
 
     def save_report(self):
+        self._finalize_report()
         Path("scout_report.json").write_text(
             json.dumps(self.report, indent=4, ensure_ascii=False), encoding="utf-8"
         )
         logger.info("[REPORT] Saved to scout_report.json")
         if self.progress_reporter.callback:
             self.progress_reporter.callback("report_saved", 1, 1, "Report saved")
+
+    def _finalize_report(self):
+        """Finaliza relatório com dados consolidados."""
+        findings = self.report.get("findings", {})
+        
+        critical = 0
+        high = 0
+        medium = 0
+        low = 0
+        info = 0
+        
+        if findings.get("taint_analysis"):
+            for flow in findings.get("taint_analysis", []):
+                severity = flow.get("severity", "low")
+                if severity == "critical":
+                    critical += 1
+                elif severity == "high":
+                    high += 1
+                elif severity == "medium":
+                    medium += 1
+                elif severity == "low":
+                    low += 1
+        
+        if findings.get("behaviors"):
+            for behavior in findings.get("behaviors", []):
+                risk = behavior.get("risk", "low")
+                if risk == "critical":
+                    critical += 1
+                elif risk == "high":
+                    high += 1
+                elif risk == "medium":
+                    medium += 1
+                else:
+                    low += 1
+        
+        if findings.get("manifest", {}).get("risky_permissions"):
+            critical += len(findings["manifest"]["risky_permissions"])
+        
+        risk_level = "low"
+        if critical > 0:
+            risk_level = "critical"
+        elif high > 0:
+            risk_level = "high"
+        elif medium > 0:
+            risk_level = "medium"
+        
+        self.report["summary"]["risk_level"] = risk_level
+        self.report["summary"]["critical_findings"] = critical
+        self.report["summary"]["high_findings"] = high
+        self.report["summary"]["medium_findings"] = medium
+        self.report["summary"]["low_findings"] = low
+        self.report["summary"]["info_findings"] = info
+        
+        self.report["executive_summary"] = self._generate_executive_summary()
+        
+        self.report["metadata"]["report_version"] = "3.0"
+        self.report["metadata"]["analysis_complete"] = datetime.now().isoformat()
+
+    def _generate_executive_summary(self) -> str:
+        """Gera resumo executivo do relatório."""
+        summary = self.report.get("summary", {})
+        risk = summary.get("risk_level", "unknown")
+        
+        total = (summary.get("critical_findings", 0) + 
+                 summary.get("high_findings", 0) +
+                 summary.get("medium_findings", 0) +
+                 summary.get("low_findings", 0))
+        
+        lines = [
+            f"Análise de segurança concluída.",
+            f"Nível de risco geral: {risk.upper()}",
+            f"Total de findings: {total}",
+        ]
+        
+        if summary.get("critical_findings", 0) > 0:
+            lines.append(f"Atenção: {summary['critical_findings']} finding(s) crítico(s) detectado(s)!")
+        
+        if summary.get("high_findings", 0) > 0:
+            lines.append(f"Alta severidade: {summary['high_findings']} finding(s)")
+        
+        return " ".join(lines)
 
     def search(
         self,
@@ -2134,6 +2349,59 @@ Introspecção em JSON:
         help="Traduz um método Smali para pseudocódigo (Python-like).",
     )
     parser.add_argument(
+        "--track-var",
+        metavar="METHOD_SIGNATURE",
+        help="Rastreia o fluxo de uma variável específica através de métodos (ex: Lcom/example/Class;->method()V).",
+    )
+    parser.add_argument(
+        "--track-var-name",
+        default="p2",
+        metavar="VARIABLE",
+        help="Nome da variável a rastrear (padrão: p2).",
+    )
+    parser.add_argument(
+        "--track-depth",
+        type=int,
+        default=10,
+        metavar="DEPTH",
+        help="Profundidade máxima para rastreamento recursivo (padrão: 10).",
+    )
+    parser.add_argument(
+        "--track-format",
+        choices=["json", "dot", "mermaid", "both"],
+        help="Formato de output para tracking (json, dot, mermaid, both).",
+    )
+    parser.add_argument(
+        "--detect-obfuscation",
+        action="store_true",
+        help="Detecta técnicas de obfuscação (reflection, strings, native).",
+    )
+    parser.add_argument(
+        "--obf-types",
+        nargs="*",
+        choices=["reflection", "strings", "native", "all"],
+        default=["all"],
+        help="Tipos de detecção de obfuscação.",
+    )
+    parser.add_argument(
+        "--obf-depth",
+        type=int,
+        default=3,
+        metavar="DEPTH",
+        help="Profundidade para tracking dinâmico (padrão: 3).",
+    )
+    parser.add_argument(
+        "--analyze-data-flow",
+        metavar="CLASS_SIGNATURE",
+        help="Analisa fluxos de dados sensíveis em uma classe (sources, sinks, exfiltração).",
+    )
+    parser.add_argument(
+        "--data-flow-depth",
+        type=int,
+        default=2,
+        help="Profundidade para análise de data flow (padrão: 2).",
+    )
+    parser.add_argument(
         "--export", action="store_true", help="Força a exportação do scout_report.json."
     )
     parser.add_argument(
@@ -2431,7 +2699,7 @@ def main():
             should_save_report = True
 
         if args.brain:
-            core.brain(args.brain)
+            core.brain(args.brain, args.machine_json)
             should_save_report = True
 
         if args.resource_map:
@@ -2490,7 +2758,7 @@ def main():
                 should_save_report = True
 
         if args.frida:
-            core.gen_frida(args.frida)
+            core.gen_frida(args.frida, args.machine_json)
             should_save_report = True
 
         if args.cfg:
@@ -2506,7 +2774,72 @@ def main():
             should_save_report = True
 
         if args.translate:
-            core.translate_semantic(args.translate)
+            core.translate_semantic(args.translate, args.machine_json)
+            should_save_report = True
+
+        if args.track_var:
+            core.track_variable_flow(
+                args.track_var, 
+                args.track_var_name, 
+                args.track_depth, 
+                args.machine_json,
+                getattr(args, 'track_format', None)
+            )
+            should_save_report = True
+
+        if args.detect_obfuscation:
+            detector = ObfuscationDetector(
+                class_index=core.class_index,
+                file_cache=core.file_cache,
+                max_depth=args.obf_depth
+            )
+            
+            types = args.obf_types if args.obf_types != ["all"] else ["reflection", "strings", "native"]
+            result = detector.detect_selected(types)
+            
+            if args.machine_json:
+                import json
+                print(json.dumps(result, ensure_ascii=False))
+            else:
+                print(f"\n=== Obfuscation Analysis ===")
+                print(f"Types: {result['settings']['detection_types']}")
+                print(f"Total techniques found: {result['summary']['total_obfuscation_techniques']}")
+                print(f"High risk: {result['summary']['high_risk']}")
+                print(f"Reflection: {result['findings']['reflection']['total']}")
+                print(f"Strings: {result['findings']['strings']['total']}")
+                print(f"Native: {result['findings']['native']['total']}")
+                print("=" * 30)
+                print(json.dumps(result, indent=2))
+            
+            core.report["findings"]["obfuscation"] = result
+            should_save_report = True
+
+        if args.analyze_data_flow:
+            import json
+            
+            tracker = AdvancedTrackingEngine(
+                class_index=core.class_index,
+                file_cache=core.file_cache
+            )
+            
+            result = tracker.analyze_class(args.analyze_data_flow)
+            
+            if args.machine_json:
+                print(json.dumps(result, ensure_ascii=False))
+            else:
+                print(f"\n=== Advanced Data Flow Analysis ===")
+                print(f"Class: {result.get('class', args.analyze_data_flow)}")
+                print(f"Risk Level: {result.get('risk_assessment', {}).get('risk_level', 'unknown')}")
+                print(f"Sources: {result.get('risk_assessment', {}).get('total_sources', 0)}")
+                print(f"Sinks: {result.get('risk_assessment', {}).get('total_sinks', 0)}")
+                print(f"Data Flows: {result.get('risk_assessment', {}).get('total_flows', 0)}")
+                print(f"Recommendations:")
+                for rec in result.get('risk_assessment', {}).get('recommendations', []):
+                    print(f"  - {rec}")
+                print("=" * 40)
+                print(json.dumps(result, indent=2))
+            
+            core.report["findings"]["data_flow_analysis"] = result
             should_save_report = True
 
         if args.generate_hook_class:

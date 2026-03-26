@@ -9,6 +9,14 @@ Uso:
     from variable_flow_tracker import VariableFlowTracker
     tracker = VariableFlowTracker(class_index, file_cache, inheritance_engine, xref_engine, max_depth=10)
     result = tracker.track_variable("Lcom/example/Class;", "methodName", "p2")
+    
+    # Gerar gráfico DOT
+    from variable_flow_tracker import generate_variable_flow_graph
+    dot = generate_variable_flow_graph(result, "flow.dot")
+    
+    # Gerar diagrama Mermaid
+    from variable_flow_tracker import generate_variable_flow_mermaid
+    mermaid = generate_variable_flow_mermaid(result)
 
 Funcionalidades:
     - Tracking recursivo de variáveis através de métodos
@@ -595,3 +603,174 @@ class VariableFlowTracker:
 def intern_sig(s: str) -> str:
     """Interns a string to save memory for repeated signatures."""
     return sys.intern(s) if isinstance(s, str) else s
+
+
+def generate_variable_flow_graph(flow_data: Dict[str, Any], output_file: str = None) -> str:
+    """
+    Gera representação gráfica DOT do fluxo de variável.
+    
+    Args:
+        flow_data: Resultado de track_variable()
+        output_file: Arquivo de saída (opcional)
+    
+    Returns:
+        String com conteúdo DOT
+    """
+    flow = flow_data.get("flow", [])
+    query = flow_data.get("query", {})
+    summary = flow_data.get("summary", {})
+    
+    lines = [
+        'digraph "VariableFlow" {',
+        '    rankdir=TB;',
+        '    node [shape=box, fontname="Courier", fontsize=10];',
+        '    edge [fontname="Courier", fontsize=9];',
+        '    label="Variable Flow Graph\\n' +
+              f'Variable: {query.get("variable")} | Depth: {query.get("depth_limit")}\\n' +
+              f'Methods: {summary.get("total_methods_analyzed")} | Usage Points: {summary.get("total_usage_points")}"',
+        '    labelloc=t;',
+        '    ranksep=0.5;',
+        '    nodesep=0.3;',
+        '',
+        '    # Styles for different operation types',
+        '    node_read [style=filled, fillcolor=lightblue];',
+        '    node_write [style=filled, fillcolor=lightyellow];',
+        '    node_pass [style=filled, fillcolor=lightgreen];',
+        '    node_return [style=filled, fillcolor=lightcoral];',
+        '    node_field [style=filled, fillcolor=lightgray];',
+        '    node_transform [style=filled, fillcolor=lavender];',
+    ]
+    
+    nodes = {}
+    edges = []
+    node_counter = 0
+    
+    for idx, method_flow in enumerate(flow):
+        method = method_flow.get("method", "unknown")
+        depth = method_flow.get("depth", 0)
+        
+        node_id = f"method_{idx}"
+        nodes[node_id] = {
+            "label": method.split("->")[-1] if "->" in method else method,
+            "full_label": method,
+            "depth": depth,
+            "type": "method"
+        }
+        
+        for usage in method_flow.get("usage", []):
+            usage_node = f"usage_{node_counter}"
+            node_counter += 1
+            
+            op = usage.get("operation", "READ")
+            state = usage.get("variable_state_after", "")
+            
+            if op == "READ":
+                style = "node_read"
+                label = f"READ: {usage.get('instruction', '')[:30]}"
+            elif op == "WRITE":
+                style = "node_write"
+                label = f"WRITE: {usage.get('instruction', '')[:30]}"
+            elif op == "PASS":
+                style = "node_pass"
+                target = usage.get("calls", {}).get("method", "")
+                label = f"PASS → {target.split('->')[-1] if '->' in target else target}"[:40]
+            elif op == "RETURN":
+                style = "node_return"
+                label = "RETURN"
+            elif op == "FIELD_READ":
+                style = "node_field"
+                label = f"FIELD READ: {usage.get('field', '')}"
+            elif op == "FIELD_WRITE":
+                style = "node_field"
+                label = f"FIELD WRITE: {usage.get('field', '')}"
+            else:
+                style = "node_transform"
+                label = f"TRANSFORM"
+            
+            nodes[usage_node] = {
+                "label": label,
+                "type": "usage",
+                "operation": op,
+                "line": usage.get("line_number", 0)
+            }
+            edges.append((node_id, usage_node, style))
+            
+            if usage.get("calls"):
+                call_method = usage.get("calls", {}).get("method", "")
+                if call_method:
+                    for j, mf in enumerate(flow):
+                        if mf.get("method") == call_method:
+                            edges.append((usage_node, f"method_{j}", "node_pass"))
+                            break
+    
+    for node_id, node_data in nodes.items():
+        if node_data["type"] == "method":
+            lines.append(f'    "{node_id}" [label="{node_data["label"]}\\n(depth={node_data["depth"]})", style=filled, fillcolor=lightblue, URL="#{node_id}"];')
+        else:
+            lines.append(f'    "{node_id}" [label="{node_data["label"]}\\nL{node_data.get("line", 0)}", style=filled, fillcolor=lightyellow];')
+    
+    for src, dst, style in edges:
+        lines.append(f'    "{src}" -> "{dst}" [style=solid, color=gray];')
+    
+    lines.append("}")
+    
+    dot_content = "\n".join(lines)
+    
+    if output_file:
+        Path(output_file).write_text(dot_content, encoding="utf-8")
+    
+    return dot_content
+
+
+def generate_variable_flow_mermaid(flow_data: Dict[str, Any]) -> str:
+    """
+    Gera representação em formato Mermaid (para GitHub, Notion, etc).
+    
+    Args:
+        flow_data: Resultado de track_variable()
+    
+    Returns:
+        String com diagrama Mermaid
+    """
+    flow = flow_data.get("flow", [])
+    query = flow_data.get("query", {})
+    summary = flow_data.get("summary", {})
+    
+    lines = [
+        "```mermaid",
+        "flowchart TD",
+        f'    %% Variable: {query.get("variable")} | Methods: {summary.get("total_methods_analyzed")}',
+    ]
+    
+    for idx, method_flow in enumerate(flow):
+        method = method_flow.get("method", "unknown")
+        method_name = method.split("->")[-1] if "->" in method else method
+        depth = method_flow.get("depth", 0)
+        
+        lines.append(f'    M{idx}["{method_name}<br/>depth={depth}"]')
+        
+        for usage in method_flow.get("usage", []):
+            op = usage.get("operation", "READ")
+            line = usage.get("line_number", 0)
+            instr = usage.get("instruction", "")[:25].replace('"', "'")
+            
+            if op == "READ":
+                lines.append(f'    M{idx} --> R{idx}_{line}["📖 READ<br/>{instr}..."]')
+            elif op == "WRITE":
+                lines.append(f'    M{idx} --> W{idx}_{line}["📝 WRITE<br/>{instr}..."]')
+            elif op == "PASS":
+                target = usage.get("calls", {}).get("method", "unknown")
+                target_name = target.split("->")[-1] if "->" in target else target
+                lines.append(f'    M{idx} --> P{idx}_{line}["➡️ PASS<br/>→ {target_name}"]')
+            elif op == "RETURN":
+                lines.append(f'    M{idx} --> RE{idx}_{line}["🔙 RETURN"]')
+            elif op == "FIELD_READ":
+                field = usage.get("field", "")
+                lines.append(f'    M{idx} --> F{idx}_{line}["📄 FIELD READ<br/>{field}"]')
+            elif op == "FIELD_WRITE":
+                field = usage.get("field", "")
+                lines.append(f'    M{idx} --> FW{idx}_{line}["📄 FIELD WRITE<br/>{field}"]')
+    
+    lines.append("```")
+    
+    return "\n".join(lines)
