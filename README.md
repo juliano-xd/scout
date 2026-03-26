@@ -168,6 +168,26 @@ Or with pytest:
 pytest tests/ -v
 ```
 
+### Test Suite Statistics
+
+| Suite | Tests | Description |
+|-------|-------|-------------|
+| test_variable_flow_tracker | ~48 | Variable tracking, field analysis, operations |
+| test_obfuscation | ~42 | Reflection, string decryption, native code |
+| test_advanced_tracking | ~77 | Sources/sinks, data flow, crypto detection |
+| test_code_metrics | ~26 | Dead code, complexity, large methods |
+| test_tracking | ~10 | Taint analysis, XREF, interning |
+| test_call_graph | ~12 | Call graph, method resolution |
+| test_search | ~10 | Regex search, LRU cache |
+| test_inheritance | ~12 | Hierarchy resolution, caching |
+| test_semantic | ~4 | Try-catch, switch reconstruction |
+| test_semantic_advanced | ~18 | Complex flows, arrays, types |
+| test_edge_cases | ~10 | Obfuscation resilience, malformed bytecode |
+| test_manifest_scanner | ~6 | Exported components, permissions |
+| test_frida | ~12 | Type mapping, hook generation |
+| test_behavior | ~8 | Behavior synthesis, knowledge base |
+| **Total** | **~310** | All tests passing |
+
 ## File Structure
 
 ```

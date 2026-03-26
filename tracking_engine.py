@@ -86,7 +86,7 @@ class XREFEngine:
         if self.load_index(): return
         
         logger.info("[XREF] Building high-performance indexes...")
-        class_path_pairs = [(intern_sig(cl), paths[-1]) for cl, paths in self.class_index.items()]
+        class_path_pairs = [(intern_sig(cl), paths[-1]) for cl, paths in self.class_index.items() if paths]
         total = len(class_path_pairs)
         
         # Use a chunked approach for better thread utilization

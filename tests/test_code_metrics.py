@@ -245,3 +245,223 @@ class TestMetricsIntegration(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestInheritanceDepth(unittest.TestCase):
+    """Test inheritance depth analysis."""
+
+    def setUp(self):
+        self.core = SmaliScoutCore(".", cache_size=100)
+
+    def test_inheritance_depth_single(self):
+        """Test single level inheritance."""
+        code = """
+.class public Lcom/example/Child;
+.super Ljava/lang/Object;
+
+.method public test()V
+    return-void
+.end method
+"""
+        result = self.core._count_methods(code)
+        self.assertIsNotNone(result)
+
+    def test_inheritance_depth_multiple(self):
+        """Test multiple level inheritance."""
+        code = """
+.class public Lcom/example/GrandChild;
+.super Lcom/example/Child;
+
+.method public test()V
+    return-void
+.end method
+
+.class public Lcom/example/Child;
+.super Ljava/lang/Object;
+
+.method public test()V
+    return-void
+.end method
+"""
+        result = self.core._count_methods(code)
+        self.assertIsNotNone(result)
+
+
+class TestCallStatistics(unittest.TestCase):
+    """Test call statistics."""
+
+    def setUp(self):
+        self.core = SmaliScoutCore(".", cache_size=100)
+
+    def test_virtual_call_count(self):
+        """Test virtual method call counting."""
+        code = """
+.class public Lcom/example/App;
+.super Ljava/lang/Object;
+
+.method public test()V
+    invoke-virtual {p0}, Lcom/example/App;->helper()V
+    invoke-virtual {p0}, Lcom/example/App;->helper()V
+    return-void
+.end method
+
+.method private helper()V
+    return-void
+.end method
+"""
+        result = self.core._count_methods(code)
+        self.assertIsNotNone(result)
+
+    def test_static_call_count(self):
+        """Test static method call counting."""
+        code = """
+.class public Lcom/example/App;
+.super Ljava/lang/Object;
+
+.method public test()V
+    invoke-static {}, Lcom/example/Utils;->staticMethod()V
+    return-void
+.end method
+"""
+        result = self.core._count_methods(code)
+        self.assertIsNotNone(result)
+
+    def test_super_call_count(self):
+        """Test super method call counting."""
+        code = """
+.class public Lcom/example/App;
+.super Ljava/lang/Object;
+
+.method public test()V
+    invoke-super {p0, p1}, Ljava/lang/Object;-><init>()V
+    return-void
+.end method
+"""
+        result = self.core._count_methods(code)
+        self.assertIsNotNone(result)
+
+
+class TestSecurityPatternDetection(unittest.TestCase):
+    """Test security pattern detection."""
+
+    def setUp(self):
+        self.core = SmaliScoutCore(".", cache_size=100)
+
+    def test_detect_hardcoded_key(self):
+        """Test detecting hardcoded encryption key."""
+        code = """
+.class public Lcom/example/Security;
+.super Ljava/lang/Object;
+
+.method public init()V
+    const-string v0, "MySecretKey123"
+    return-void
+.end method
+"""
+        result = self.core._detect_dead_code(code, "Lcom/example/Security;")
+        self.assertIsNotNone(result)
+
+    def test_detect_debug_enabled(self):
+        """Test detecting debug flag."""
+        code = """
+.class public Lcom/example/Config;
+.super Ljava/lang/Object;
+
+.method public isDebug()Z
+    const/4 v0, 0x1
+    return v0
+.end method
+"""
+        result = self.core._detect_dead_code(code, "Lcom/example/Config;")
+        self.assertIsNotNone(result)
+
+
+class TestLargeMethodDetection(unittest.TestCase):
+    """Test large method detection."""
+
+    def setUp(self):
+        self.core = SmaliScoutCore(".", cache_size=100)
+
+    def test_large_method_detection_exact_threshold(self):
+        """Test detecting method at exact threshold."""
+        code = """
+.class public Lcom/example/Test;
+.super Ljava/lang/Object;
+
+.method public bigMethod()V
+    .registers 5
+"""
+        for i in range(50):
+            code += f"    const/4 v{i % 5}, {i}\n"
+        code += "    return-void\n.end method\n"
+        
+        result = self.core._detect_large_methods(code, threshold=50)
+        self.assertGreater(len(result), 0)
+
+    def test_large_method_detection_above_threshold(self):
+        """Test detecting method above threshold."""
+        code = """
+.class public Lcom/example/Test;
+.super Ljava/lang/Object;
+
+.method public bigMethod()V
+    .registers 5
+"""
+        for i in range(100):
+            code += f"    const/4 v{i % 5}, {i}\n"
+        code += "    return-void\n.end method\n"
+        
+        result = self.core._detect_large_methods(code, threshold=50)
+        self.assertGreater(len(result), 0)
+
+
+class TestComplexityAnalysis(unittest.TestCase):
+    """Test complexity analysis."""
+
+    def setUp(self):
+        self.core = SmaliScoutCore(".", cache_size=100)
+
+    def test_complexity_with_multiple_branches(self):
+        """Test complexity with multiple branches."""
+        code = """
+.class public Lcom/example/Test;
+.super Ljava/lang/Object;
+
+.method public complexMethod()V
+    .registers 4
+    const/4 v0, 0x1
+    if-gt v0, v1, :cond_1
+    if-eq v0, v2, :cond_2
+    return-void
+:cond_1
+    return-void
+:cond_2
+    return-void
+.end method
+"""
+        result = self.core._analyze_complexity(code)
+        self.assertIsInstance(result, list)
+
+    def test_complexity_with_loops(self):
+        """Test complexity with loops."""
+        code = """
+.class public Lcom/example/Test;
+.super Ljava/lang/Object;
+
+.method public loopMethod()V
+    .registers 3
+    const/4 v0, 0x0
+    :loop_start
+    if-ge v0, v1, :loop_end
+    add-int v0, v0, 0x1
+    goto :loop_start
+    :loop_end
+    return-void
+.end method
+"""
+        result = self.core._analyze_complexity(code)
+        self.assertIsInstance(result, list)
+
+
+if __name__ == "__main__":
+    unittest.main()

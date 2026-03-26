@@ -137,6 +137,7 @@ class ObfuscationDetector:
             (re.compile(r'invoke-static\s+{([^}]*)},\s*Ljava/lang/System;->load\(Ljava/lang/String;\)V'), NativeType.SYSTEM_LOAD),
             (re.compile(r'invoke-static\s+{([^}]*)},\s*Ljava/lang/System;->loadLibrary\(Ljava/lang/String;\)V'), NativeType.SYSTEM_LOAD_LIBRARY),
             (re.compile(r'invoke-static\s+{([^}]*)},\s*Ljava/lang/Runtime;->load\(Ljava/lang/String;\)V'), NativeType.RUNTIME_LOAD),
+            (re.compile(r'invoke-static\s+{[^}]*},\s*Ljava/lang/Runtime;->exec'), NativeType.RUNTIME_LOAD),
             (re.compile(r'RegisterNatives'), NativeType.JNI),
         ]
         

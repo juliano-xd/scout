@@ -142,16 +142,20 @@ class AdvancedTrackingEngine:
             "Landroid/telephony/TelephonyManager;->getSimSerialNumber": SensitiveType.DEVICE_INFO,
             "Landroid/telephony/TelephonyManager;->getImei": SensitiveType.DEVICE_INFO,
             "Landroid/net/wifi/WifiInfo;->getMacAddress": SensitiveType.DEVICE_INFO,
+            "Landroid/bluetooth/BluetoothAdapter;->getAddress": SensitiveType.DEVICE_INFO,
             "Landroid/location/LocationManager;->getLastKnownLocation": SensitiveType.LOCATION,
             "Landroid/location/Location;->getLatitude": SensitiveType.LOCATION,
             "Landroid/location/Location;->getLongitude": SensitiveType.LOCATION,
             "Landroid/content/ContentResolver;->query": SensitiveType.PII,
             "Landroid/provider/ContactsContract;->": SensitiveType.PII,
+            "Landroid/provider/CalendarContract;->": SensitiveType.PII,
+            "Landroid/accounts/AccountManager;->getAccounts": SensitiveType.PII,
             "Landroid/provider/Telephony;->SMS": SensitiveType.PII,
             "Ljava/lang/String;->getBytes": SensitiveType.CREDENTIAL,
             "Landroid/util/Base64;->decode": SensitiveType.CUSTOM_KEY,
             "Landroid/preference/SharedPreferences;->getString": SensitiveType.CREDENTIAL,
             "Landroid/hardware/biometrics/BiometricPrompt;->authenticate": SensitiveType.BIOMETRIC,
+            "Landroid/hardware/fingerprint/FingerprintManager;->authenticate": SensitiveType.BIOMETRIC,
             "Landroid/hardware/Camera;->open": SensitiveType.CAMERA,
             "Landroid/media/AudioRecord;->startRecording": SensitiveType.MICROPHONE,
         }
@@ -165,15 +169,22 @@ class AdvancedTrackingEngine:
             "Ljava/io/FileOutputStream;->write": SinkType.FILE,
             "Ljava/io/File;->write": SinkType.FILE,
             "Landroid/content/SharedPreferences;->edit": SinkType.SHARED_PREFS,
+            "Landroid/content/SharedPreferences;->getString": SinkType.SHARED_PREFS,
             "Landroid/content/SharedPreferences;->putString": SinkType.SHARED_PREFS,
             "Landroid/content/SharedPreferences$Editor;->putString": SinkType.SHARED_PREFS,
+            "Landroid/content/ClipboardManager;->setPrimaryClip": SinkType.CLIPBOARD,
+            "Landroid/content/ClipboardManager;->setText": SinkType.CLIPBOARD,
+            "Landroid/telephony/SmsManager;->sendTextMessage": SinkType.SMS,
+            "Landroid/telephony/SmsManager;->sendMultipartTextMessage": SinkType.SMS,
             "Landroid/database/sqlite/SQLiteDatabase;->execSQL": SinkType.DATABASE,
             "Landroid/database/sqlite/SQLiteDatabase;->insert": SinkType.DATABASE,
+            "Landroid/database/sqlite/SQLiteDatabase;->update": SinkType.DATABASE,
             "Ljava/lang/ProcessBuilder;->command": SinkType.SYSTEM,
+            "Ljava/lang/ProcessBuilder;->start": SinkType.SYSTEM,
             "Ljava/lang/Runtime;->exec": SinkType.SYSTEM,
+            "Landroid/os/SystemProperties;->set": SinkType.SYSTEM,
             "Landroid/util/Log;->": SinkType.LOG,
             "Ljava/io/PrintWriter;->write": SinkType.LOG,
-            "Landroid/clipboard/ClipboardManager;->setText": SinkType.CLIPBOARD,
             "Landroid/content/Intent;->putExtra": SinkType.INTENT,
             "Landroid/os/Bundle;->putString": SinkType.BUNDLE,
             "Landroid/os/Bundle;->putInt": SinkType.BUNDLE,
@@ -189,6 +200,10 @@ class AdvancedTrackingEngine:
             "Ljava/security/MessageDigest;->digest": "hash_final",
             "Ljava/security/KeyPairGenerator;->initialize": "keypair_init",
             "Ljava/security/KeyPairGenerator;->generateKeyPair": "keypair_gen",
+            "Ljavax/crypto/KeyGenerator;->getInstance": "key_gen",
+            "Ljava/security/KeyStore;->getKey": "key_load",
+            "Ljavax/crypto/Mac;->getInstance": "hash_init",
+            "Ljava/security/Signature;->getInstance": "signature_init",
         }
         
         self.SENSITIVE_STRINGS = [
@@ -424,10 +439,11 @@ class AdvancedTrackingEngine:
     def _assess_risk(self, sources: List[TaintSource], sinks: List[TaintSink], flows: List[DataFlow]) -> Dict:
         """Avalia o risco geral da classe."""
         high_risk_count = sum(1 for s in sources if s.source_type in [SensitiveType.CREDENTIAL, SensitiveType.AUTH_TOKEN])
-        medium_risk_count = sum(1 for s in sources if s.source_type in [SensitiveType.DEVICE_INFO, SensitiveType.PII])
+        medium_risk_count = sum(1 for s in sources if s.source_type in [SensitiveType.DEVICE_INFO, SensitiveType.PII, SensitiveType.LOCATION])
+        high_risk_flows = sum(1 for f in flows if f.risk_level == "high")
         
         risk_level = "low"
-        if high_risk_count > 0:
+        if high_risk_count > 0 or high_risk_flows > 0:
             risk_level = "high"
         elif medium_risk_count > 0:
             risk_level = "medium"

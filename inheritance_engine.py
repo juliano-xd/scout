@@ -5,9 +5,6 @@ from pathlib import Path
 from collections import defaultdict, deque
 from typing import List, Dict, Set, Optional, Tuple
 
-# Assuming this exists in the project scope
-# from scout_knowledge import ScoutKnowledge
-
 logger = logging.getLogger("ScoutInheritance")
 
 def intern_sig(s: str) -> str:

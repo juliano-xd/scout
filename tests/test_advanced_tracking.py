@@ -634,5 +634,257 @@ class TestJSONOutput(unittest.TestCase):
         self.assertIn("recommendations", result["summary"])
 
 
+class TestMoreSinkDetection(unittest.TestCase):
+    """Test additional sink detection."""
+
+    def setUp(self):
+        self.class_index = {}
+        self.file_cache = MagicMock()
+        self.engine = AdvancedTrackingEngine(self.class_index, self.file_cache)
+
+    def test_detect_clipboard_sink(self):
+        """Test detecting ClipboardManager."""
+        result = self.engine._detect_sink(
+            "invoke-virtual {p0, v0}, Landroid/content/ClipboardManager;->setPrimaryClip(Landroid/content/ClipData;)V",
+            "Lcom/example/App;->copy()V",
+            10
+        )
+        
+        self.assertIsNotNone(result)
+        self.assertEqual(result.sink_type, SinkType.CLIPBOARD)
+
+    def test_detect_sms_sink(self):
+        """Test detecting SmsManager.sendTextMessage."""
+        result = self.engine._detect_sink(
+            "invoke-virtual {p0, v0, v1, v2}, Landroid/telephony/SmsManager;->sendTextMessage(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Landroid/app/PendingIntent;Landroid/app/PendingIntent;)V",
+            "Lcom/example/App;->sendSms()V",
+            15
+        )
+        
+        self.assertIsNotNone(result)
+        self.assertEqual(result.sink_type, SinkType.SMS)
+
+    def test_detect_database_sink(self):
+        """Test detecting SQLite database write."""
+        result = self.engine._detect_sink(
+            "invoke-virtual {v0, v1}, Landroid/database/sqlite/SQLiteDatabase;->insert(Ljava/lang/String;Ljava/lang/String;Landroid/content/ContentValues;)I",
+            "Lcom/example/App;->save()V",
+            20
+        )
+        
+        self.assertIsNotNone(result)
+        self.assertEqual(result.sink_type, SinkType.DATABASE)
+
+    def test_detect_system_property_sink(self):
+        """Test detecting SystemProperties.set."""
+        result = self.engine._detect_sink(
+            "invoke-static {v0, v1}, Landroid/os/SystemProperties;->set(Ljava/lang/String;Ljava/lang/String;)V",
+            "Lcom/example/App;->setProp()V",
+            25
+        )
+        
+        self.assertIsNotNone(result)
+        self.assertEqual(result.sink_type, SinkType.SYSTEM)
+
+    def test_detect_process_builder_sink(self):
+        """Test detecting ProcessBuilder.start."""
+        result = self.engine._detect_sink(
+            "invoke-virtual {v0}, Ljava/lang/ProcessBuilder;->start()Ljava/lang/Process;",
+            "Lcom/example/App;->exec()V",
+            30
+        )
+        
+        self.assertIsNotNone(result)
+        self.assertEqual(result.sink_type, SinkType.SYSTEM)
+
+
+class TestMoreSourceDetection(unittest.TestCase):
+    """Test additional source detection."""
+
+    def setUp(self):
+        self.class_index = {}
+        self.file_cache = MagicMock()
+        self.engine = AdvancedTrackingEngine(self.class_index, self.file_cache)
+
+    def test_detect_contact_source(self):
+        """Test detecting ContactsContract query."""
+        result = self.engine._detect_source(
+            "invoke-virtual {p0}, Landroid/provider/ContactsContract;->query(Landroid/net/Uri;[Ljava/lang/String;Ljava/lang/String;[Ljava/lang/String;Ljava/lang/String;)Landroid/database/Cursor;",
+            "Lcom/example/App;->getContacts()V",
+            5
+        )
+        
+        self.assertIsNotNone(result)
+        self.assertEqual(result.source_type, SensitiveType.PII)
+
+    def test_detect_calendar_source(self):
+        """Test detecting CalendarContract query."""
+        result = self.engine._detect_source(
+            "invoke-virtual {p0}, Landroid/provider/CalendarContract;->query(Landroid/net/Uri;[Ljava/lang/String;Ljava/lang/String;[Ljava/lang/String;Ljava/lang/String;)Landroid/database/Cursor;",
+            "Lcom/example/App;->getEvents()V",
+            10
+        )
+        
+        self.assertIsNotNone(result)
+        self.assertEqual(result.source_type, SensitiveType.PII)
+
+    def test_detect_account_source(self):
+        """Test detecting AccountManager.getAccounts."""
+        result = self.engine._detect_source(
+            "invoke-virtual {p0}, Landroid/accounts/AccountManager;->getAccounts()[Landroid/accounts/Account;",
+            "Lcom/example/App;->getAccounts()V",
+            15
+        )
+        
+        self.assertIsNotNone(result)
+        self.assertEqual(result.source_type, SensitiveType.PII)
+
+    def test_detect_wifi_info_source(self):
+        """Test detecting WifiManager."""
+        result = self.engine._detect_source(
+            "invoke-virtual {p0}, Landroid/net/wifi/WifiInfo;->getMacAddress()Ljava/lang/String;",
+            "Lcom/example/App;->getWifi()V",
+            20
+        )
+        
+        self.assertIsNotNone(result)
+        self.assertEqual(result.source_type, SensitiveType.DEVICE_INFO)
+
+    def test_detect_bluetooth_source(self):
+        """Test detecting BluetoothAdapter."""
+        result = self.engine._detect_source(
+            "invoke-virtual {p0}, Landroid/bluetooth/BluetoothAdapter;->getAddress()Ljava/lang/String;",
+            "Lcom/example/App;->getBt()V",
+            25
+        )
+        
+        self.assertIsNotNone(result)
+        self.assertEqual(result.source_type, SensitiveType.DEVICE_INFO)
+
+    def test_detect_fingerprint_source(self):
+        """Test detecting FingerprintManager."""
+        result = self.engine._detect_source(
+            "invoke-virtual {p0}, Landroid/hardware/fingerprint/FingerprintManager;->authenticate(Landroid/hardware/fingerprint/FingerprintManager$CryptoObject;Landroid/os/CancellationSignal;Landroid/hardware/fingerprint/FingerprintManager$AuthenticationCallback;)V",
+            "Lcom/example/App;->auth()V",
+            30
+        )
+        
+        self.assertIsNotNone(result)
+        self.assertEqual(result.source_type, SensitiveType.BIOMETRIC)
+
+
+class TestCryptoEdgeCases(unittest.TestCase):
+    """Test crypto detection edge cases."""
+
+    def setUp(self):
+        self.class_index = {}
+        self.file_cache = MagicMock()
+        self.engine = AdvancedTrackingEngine(self.class_index, self.file_cache)
+
+    def test_detect_cipher_do_final(self):
+        """Test detecting Cipher.doFinal."""
+        result = self.engine._detect_crypto(
+            "invoke-virtual {v0, v1}, Ljavax/crypto/Cipher;->doFinal([B)[B",
+            "Lcom/example/Security;->decrypt()V",
+            10
+        )
+        
+        self.assertIsNotNone(result)
+        self.assertEqual(result.operation_type, "cipher_final")
+
+    def test_detect_key_generator(self):
+        """Test detecting KeyGenerator."""
+        result = self.engine._detect_crypto(
+            "invoke-static {v0}, Ljavax/crypto/KeyGenerator;->getInstance(Ljava/lang/String;)Ljavax/crypto/KeyGenerator;",
+            "Lcom/example/Security;->genKey()V",
+            15
+        )
+        
+        self.assertIsNotNone(result)
+        self.assertEqual(result.operation_type, "key_gen")
+
+    def test_detect_key_store(self):
+        """Test detecting KeyStore."""
+        result = self.engine._detect_crypto(
+            "invoke-virtual {p0}, Ljava/security/KeyStore;->getKey(Ljava/lang/String;[C)Ljava/security/Key;",
+            "Lcom/example/Security;->getKey()V",
+            20
+        )
+        
+        self.assertIsNotNone(result)
+        self.assertIn(result.operation_type, ["key_gen", "key_load"])
+
+    def test_detect_mac(self):
+        """Test detecting Mac for MAC generation."""
+        result = self.engine._detect_crypto(
+            "invoke-static {v0}, Ljavax/crypto/Mac;->getInstance(Ljava/lang/String;)Ljavax/crypto/Mac;",
+            "Lcom/example/Hash;->computeMac()V",
+            25
+        )
+        
+        self.assertIsNotNone(result)
+        self.assertEqual(result.operation_type, "hash_init")
+
+    def test_detect_signature(self):
+        """Test detecting Signature for signing."""
+        result = self.engine._detect_crypto(
+            "invoke-static {v0}, Ljava/security/Signature;->getInstance(Ljava/lang/String;)Ljava/security/Signature;",
+            "Lcom/example/Security;->sign()V",
+            30
+        )
+        
+        self.assertIsNotNone(result)
+        self.assertIn(result.operation_type, ["signature_init", "hash_init"])
+
+
+class TestDataFlowRiskLevels(unittest.TestCase):
+    """Test risk level calculation."""
+
+    def setUp(self):
+        self.class_index = {}
+        self.file_cache = MagicMock()
+        self.engine = AdvancedTrackingEngine(self.class_index, self.file_cache)
+
+    def test_high_risk_with_location(self):
+        """Test high risk with location to network."""
+        sources = [
+            TaintSource("v0", SensitiveType.LOCATION, "location", 5, "M")
+        ]
+        sinks = [
+            TaintSink("v1", SinkType.NETWORK, "connect", 20, "M")
+        ]
+        flows = [DataFlow(sources[0], sinks[0], ["M"], "high")]
+        
+        assessment = self.engine._assess_risk(sources, sinks, flows)
+        
+        self.assertEqual(assessment["risk_level"], "high")
+
+    def test_medium_risk_pii_to_log(self):
+        """Test medium risk with PII to log."""
+        sources = [
+            TaintSource("v0", SensitiveType.PII, "email", 5, "M")
+        ]
+        sinks = [
+            TaintSink("v1", SinkType.LOG, "log", 20, "M")
+        ]
+        flows = []
+        
+        assessment = self.engine._assess_risk(sources, sinks, flows)
+        
+        self.assertIn(assessment["risk_level"], ["medium", "high"])
+
+    def test_low_risk_no_sensitive_to_file(self):
+        """Test low risk with non-sensitive data to file."""
+        sources = []
+        sinks = [
+            TaintSink("v1", SinkType.FILE, "write", 20, "M")
+        ]
+        flows = []
+        
+        assessment = self.engine._assess_risk(sources, sinks, flows)
+        
+        self.assertEqual(assessment["risk_level"], "low")
+
+
 if __name__ == "__main__":
     unittest.main()

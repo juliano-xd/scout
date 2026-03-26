@@ -386,5 +386,177 @@ class TestFieldTracking(unittest.TestCase):
         self.assertIn("field", field_usages[0])
 
 
+class TestArrayOperations(unittest.TestCase):
+    """Test array operations tracking."""
+
+    def setUp(self):
+        self.tracker = VariableFlowTracker({}, MagicMock())
+
+    def test_classify_aput(self):
+        """Test classifying aput as array write."""
+        line = "aput-object p2, p1, p0"
+        op = self.tracker._classify_operation(line)
+        
+        self.assertIn(op, [OperationType.WRITE, OperationType.READ])
+
+    def test_classify_aget(self):
+        """Test classifying aget as array read."""
+        line = "aget-object v0, p1, p0"
+        op = self.tracker._classify_operation(line)
+        
+        self.assertEqual(op, OperationType.READ)
+
+    def test_array_length(self):
+        """Test classifying array-length."""
+        line = "array-length v0, p1"
+        op = self.tracker._classify_operation(line)
+        
+        self.assertEqual(op, OperationType.READ)
+
+
+class TestSwitchStatements(unittest.TestCase):
+    """Test switch statement handling."""
+
+    def setUp(self):
+        self.tracker = VariableFlowTracker({}, MagicMock())
+
+    def test_extract_packed_switch_target(self):
+        """Test extracting packed-switch target."""
+        line = "packed-switch p1, :pswitch_data"
+        
+        matches = list(self.tracker.RE_IF.finditer(line))
+        self.assertEqual(len(matches), 0)
+
+
+class TestExceptionHandling(unittest.TestCase):
+    """Test exception handling in tracking."""
+
+    def setUp(self):
+        self.tracker = VariableFlowTracker({}, MagicMock())
+
+    def test_classify_throw(self):
+        """Test classifying throw instruction."""
+        line = "throw p1"
+        op = self.tracker._classify_operation(line)
+        
+        self.assertIn(op, [OperationType.RETURN, OperationType.READ])
+
+    def test_classify_monitor(self):
+        """Test classifying monitor instructions."""
+        line = "monitor-enter p1"
+        op = self.tracker._classify_operation(line)
+        
+        self.assertIn(op, [OperationType.READ, OperationType.WRITE])
+
+
+class TestParseParamsEdgeCases(unittest.TestCase):
+    """Test parameter parsing edge cases."""
+
+    def setUp(self):
+        self.tracker = VariableFlowTracker({}, MagicMock())
+
+    def test_parse_array_params(self):
+        """Test parsing array parameters."""
+        params = self.tracker._parse_params("[Ljava/lang/String;")
+        
+        self.assertIn("[Ljava/lang/String;", params)
+
+    def test_parse_object_array(self):
+        """Test parsing object array."""
+        params = self.tracker._parse_params("[[Ljava/lang/Object;")
+        
+        self.assertIn("[[Ljava/lang/Object;", params)
+
+    def test_parse_primitive_array(self):
+        """Test parsing primitive array."""
+        params = self.tracker._parse_params("[I")
+        
+        self.assertIn("[I", params)
+
+    def test_parse_mixed_params(self):
+        """Test parsing mixed parameter types."""
+        params = self.tracker._parse_params("ILjava/lang/String;[B")
+        
+        self.assertEqual(len(params), 3)
+        self.assertIn("I", params)
+        self.assertIn("Ljava/lang/String;", params)
+        self.assertIn("[B", params)
+
+
+class TestRegisterRangeExtraction(unittest.TestCase):
+    """Test register range extraction."""
+
+    def setUp(self):
+        self.tracker = VariableFlowTracker({}, MagicMock())
+
+    def test_extract_range_notation(self):
+        """Test extracting register range notation."""
+        line = "invoke-static {p0, p1, p2}, Lcom/example/Test;->method(Ljava/lang/String;)V"
+        regs = self.tracker._extract_register_list(line)
+        
+        self.assertIn("p0", regs)
+        self.assertIn("p1", regs)
+        self.assertIn("p2", regs)
+
+    def test_extract_mixed_registers(self):
+        """Test extracting mixed v and p registers."""
+        line = "invoke-virtual {v0, p1}, Ljava/lang/String;->concat(Ljava/lang/String;)Ljava/lang/String;"
+        regs = self.tracker._extract_register_list(line)
+        
+        self.assertIn("v0", regs)
+        self.assertIn("p1", regs)
+
+
+class TestSummaryBuilding(unittest.TestCase):
+    """Test summary building."""
+
+    def setUp(self):
+        self.tracker = VariableFlowTracker({}, MagicMock())
+
+    def test_build_summary_with_constants(self):
+        """Test summary with constant values."""
+        flow = [{
+            "method": "Lcom/example/App;->test()V",
+            "usage": [
+                {"operation": "WRITE", "variable_state_after": "constant_value"},
+                {"operation": "READ", "variable_state_after": "read"}
+            ]
+        }]
+        
+        summary = self.tracker._build_summary(flow)
+        
+        self.assertIn("constant_value", summary["lifecycle"])
+        self.assertEqual(summary["total_usage_points"], 2)
+
+    def test_build_summary_with_return(self):
+        """Test summary with return."""
+        flow = [{
+            "method": "Lcom/example/App;->test()V",
+            "usage": [
+                {"operation": "WRITE", "variable_state_after": "written"},
+                {"operation": "RETURN", "variable_state_after": "returned"}
+            ]
+        }]
+        
+        summary = self.tracker._build_summary(flow)
+        
+        self.assertIn("returned", summary["lifecycle"])
+        self.assertFalse(summary["flow_terminated"])
+
+    def test_build_summary_with_pass(self):
+        """Test summary with pass to method."""
+        flow = [{
+            "method": "Lcom/example/App;->test()V",
+            "usage": [
+                {"operation": "WRITE", "variable_state_after": "written"},
+                {"operation": "PASS", "variable_state_after": "passed_to_method"}
+            ]
+        }]
+        
+        summary = self.tracker._build_summary(flow)
+        
+        self.assertIn("passed_to_method", summary["lifecycle"])
+
+
 if __name__ == "__main__":
     unittest.main()

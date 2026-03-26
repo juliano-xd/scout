@@ -1038,6 +1038,21 @@ class SmaliScoutCore:
             "base64": re.compile(r'Landroid/util/Base64;->decode', re.MULTILINE),
             "crypto": re.compile(r'Ljava/security/MessageDigest;', re.MULTILINE),
             "keystore": re.compile(r'Ljava/security/KeyStore;', re.MULTILINE),
+            
+            "loop_for": re.compile(r':for_(\w+)', re.MULTILINE),
+            "loop_while": re.compile(r':while_(\w+)', re.MULTILINE),
+            "loop_goto": re.compile(r'goto/[^:]+:(\w+)', re.MULTILINE),
+            "array_iteration": re.compile(r'aget|aput', re.MULTILINE),
+            "switch_packed": re.compile(r'packed-switch', re.MULTILINE),
+            "switch_sparse": re.compile(r'sparse-switch', re.MULTILINE),
+            "switch_table": re.compile(r'tableswitch', re.MULTILINE),
+            "catch_all": re.compile(r'\.catch\s*', re.MULTILINE),
+            "catch_specific": re.compile(r'\.catch\s+\{([^}]+)\}', re.MULTILINE),
+            "try_start": re.compile(r'\.try\s+', re.MULTILINE),
+            "if_ne": re.compile(r'if-ne\s+', re.MULTILINE),
+            "if_eq": re.compile(r'if-eq\s+', re.MULTILINE),
+            "if_lt": re.compile(r'if-lt\s+', re.MULTILINE),
+            "if_gt": re.compile(r'if-gt\s+', re.MULTILINE),
         }
     
     def _get_cached_metrics(self, class_sig: str, code: str) -> Dict[str, Any]:
@@ -1054,6 +1069,136 @@ class SmaliScoutCore:
             self._metrics_cache.clear()
         
         return result
+
+    def _detect_control_flow_patterns(self, code: str) -> Dict[str, Any]:
+        """Detecta padrões de control flow (loops, switch, exceptions)."""
+        result = {
+            "loops": self._detect_loops(code),
+            "switches": self._detect_switches(code),
+            "exceptions": self._detect_exception_handlers(code),
+            "conditionals": self._detect_conditionals(code)
+        }
+        
+        result["total_control_points"] = (
+            len(result["loops"]) + 
+            len(result["switches"]) + 
+            len(result["exceptions"]) +
+            len(result["conditionals"])
+        )
+        
+        return result
+
+    def _detect_loops(self, code: str) -> List[Dict[str, Any]]:
+        """Detecta loops no código Smali."""
+        loops = []
+        
+        for_match = self._patterns["loop_for"].finditer(code)
+        for match in for_match:
+            loops.append({
+                "type": "for",
+                "label": match.group(1) if match.groups() else None,
+                "line": match.start()
+            })
+        
+        while_match = self._patterns["loop_while"].finditer(code)
+        for match in while_match:
+            loops.append({
+                "type": "while",
+                "label": match.group(1) if match.groups() else None,
+                "line": match.start()
+            })
+        
+        goto_loops = self._patterns["loop_goto"].finditer(code)
+        for match in goto_loops:
+            loops.append({
+                "type": "goto_loop",
+                "line": match.start()
+            })
+        
+        array_iteration = self._patterns["array_iteration"].findall(code)
+        if array_iteration:
+            loops.append({
+                "type": "array_iteration",
+                "count": len(array_iteration)
+            })
+        
+        return loops
+
+    def _detect_switches(self, code: str) -> List[Dict[str, Any]]:
+        """Detecta switch/case no código Smali."""
+        switches = []
+        
+        packed = self._patterns["switch_packed"].finditer(code)
+        for match in packed:
+            switches.append({
+                "type": "packed-switch",
+                "line": match.start()
+            })
+        
+        sparse = self._patterns["switch_sparse"].finditer(code)
+        for match in sparse:
+            switches.append({
+                "type": "sparse-switch",
+                "line": match.start()
+            })
+        
+        tableswitch = self._patterns["switch_table"].finditer(code)
+        for match in tableswitch:
+            switches.append({
+                "type": "tableswitch",
+                "line": match.start()
+            })
+        
+        return switches
+
+    def _detect_exception_handlers(self, code: str) -> List[Dict[str, Any]]:
+        """Detecta exception handlers."""
+        exceptions = []
+        
+        catch_all = self._patterns["catch_all"].finditer(code)
+        for match in catch_all:
+            exceptions.append({
+                "type": ".catch",
+                "line": match.start()
+            })
+        
+        catch_spec = self._patterns["catch_specific"].finditer(code)
+        for match in catch_spec:
+            exceptions.append({
+                "type": ".catch",
+                "exception": match.group(1) if match.groups() else None,
+                "line": match.start()
+            })
+        
+        try_start = self._patterns["try_start"].findall(code)
+        if try_start:
+            exceptions.append({
+                "type": "try_block",
+                "count": len(try_start)
+            })
+        
+        return exceptions
+
+    def _detect_conditionals(self, code: str) -> List[Dict[str, Any]]:
+        """Detecta condicionais (if statements)."""
+        conditionals = []
+        
+        conditional_patterns = [
+            ("if_ne", self._patterns["if_ne"]),
+            ("if_eq", self._patterns["if_eq"]),
+            ("if_lt", self._patterns["if_lt"]),
+            ("if_gt", self._patterns["if_gt"]),
+        ]
+        
+        for pattern_name, pattern in conditional_patterns:
+            matches = pattern.finditer(code)
+            for match in matches:
+                conditionals.append({
+                    "type": pattern_name,
+                    "line": match.start()
+                })
+        
+        return conditionals
 
     def _get_numeric_smali_dirs(self):
         dirs = [
@@ -1745,6 +1890,7 @@ class SmaliScoutCore:
         android_components = self._analyze_android_components(code)
         malware_patterns = self._detect_malware_patterns(code)
         serialization = self._analyze_serialization(code)
+        control_flow = self._detect_control_flow_patterns(code)
         
         total_instructions = sum(m.get("instructions", 0) for m in lines_per_method)
         avg_complexity = sum(c.get("complexity_score", 0) for c in complexity) / max(len(complexity), 1)
@@ -1760,6 +1906,7 @@ class SmaliScoutCore:
             "variable_count": var_count,
             "lines_per_method": lines_per_method,
             "complexity_analysis": complexity,
+            "control_flow": control_flow,
             "dead_code": dead_code,
             "large_methods": large_methods,
             "inheritance": inheritance,

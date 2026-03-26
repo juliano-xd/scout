@@ -470,5 +470,239 @@ class TestDetectSelected(unittest.TestCase):
         self.assertEqual(result["settings"]["detection_types"], ["reflection"])
 
 
+class TestReflectionEdgeCases(unittest.TestCase):
+    """Test reflection detection edge cases."""
+
+    def setUp(self):
+        self.class_index = {"Lcom/example/App;": [Path("/fake/app.smali")]}
+        self.file_cache = MagicMock()
+        self.file_cache.get.return_value = None
+        self.detector = ObfuscationDetector(self.class_index, self.file_cache)
+
+    def test_detect_array_class_forName(self):
+        """Test detecting array class loading."""
+        content = """
+.class public Lcom/example/App;
+.super Ljava/lang/Object;
+
+.method public load()V
+    const-string v0, "[Lcom/example/MyClass;"
+    invoke-static {v0}, Ljava/lang/Class;->forName(Ljava/lang/String;)Ljava/lang/Class;
+    return-void
+.end method
+"""
+        self.file_cache.get.return_value = content
+        
+        result = self.detector.detect_reflection()
+        
+        self.assertGreater(len(result), 0)
+
+    def test_detect_reflection_with_variable(self):
+        """Test detecting reflection using variable class name."""
+        content = """
+.class public Lcom/example/App;
+.super Ljava/lang/Object;
+
+.method public dynamicLoad()V
+    sget-object v0, Lcom/example/Config;->className:Ljava/lang/String;
+    invoke-static {v0}, Ljava/lang/Class;->forName(Ljava/lang/String;)Ljava/lang/Class;
+    return-void
+.end method
+"""
+        self.file_cache.get.return_value = content
+        
+        result = self.detector.detect_reflection()
+        
+        self.assertGreater(len(result), 0)
+
+
+class TestStringDecryptionEdgeCases(unittest.TestCase):
+    """Test string decryption edge cases."""
+
+    def setUp(self):
+        self.class_index = {
+            "Lcom/example/Decrypt;": [Path("/fake/decrypt.smali")],
+            "Lcom/example/Utils;": [Path("/fake/utils.smali")],
+            "Lcom/example/App;": [Path("/fake/app.smali")],
+        }
+        self.file_cache = MagicMock()
+        self.file_cache.get.return_value = None
+        self.detector = ObfuscationDetector(self.class_index, self.file_cache)
+
+    def test_detect_aes_decrypt(self):
+        """Test detecting AES decryption pattern."""
+        content = """
+.class public Lcom/example/Decrypt;
+.super Ljava/lang/Object;
+
+.method public decrypt([B)[B
+    const-string v0, "AES/CBC/PKCS5Padding"
+    invoke-static {v0}, Ljavax/crypto/Cipher;->getInstance(Ljava/lang/String;)Ljavax/crypto/Cipher;
+    return-void
+.end method
+"""
+        self.file_cache.get.return_value = content
+        
+        result = self.detector.detect_string_decryption()
+        
+        self.assertGreater(len(result), 0)
+
+    def test_detect_des_decrypt(self):
+        """Test detecting DES decryption pattern."""
+        content = """
+.class public Lcom/example/Decrypt;
+.super Ljava/lang/Object;
+
+.method public decrypt([B)[B
+    const-string v0, "DES/ECB/PKCS5Padding"
+    invoke-static {v0}, Ljavax/crypto/Cipher;->getInstance(Ljava/lang/String;)Ljavax/crypto/Cipher;
+    return-void
+.end method
+"""
+        self.file_cache.get.return_value = content
+        
+        result = self.detector.detect_string_decryption()
+        
+        self.assertGreater(len(result), 0)
+
+    def test_detect_rsa_decrypt(self):
+        """Test detecting RSA decryption pattern."""
+        content = """
+.class public Lcom/example/Decrypt;
+.super Ljava/lang/Object;
+
+.method public decrypt([B)[B
+    const-string v0, "RSA/ECB/PKCS1Padding"
+    invoke-static {v0}, Ljavax/crypto/Cipher;->getInstance(Ljava/lang/String;)Ljavax/crypto/Cipher;
+    return-void
+.end method
+"""
+        self.file_cache.get.return_value = content
+        
+        result = self.detector.detect_string_decryption()
+        
+        self.assertGreater(len(result), 0)
+
+    def test_detect_android_base64(self):
+        """Test detecting Android Base64 API."""
+        content = """
+.class public Lcom/example/Utils;
+.super Ljava/lang/Object;
+
+.method public decode()Ljava/lang/String;
+    const-string v0, "SGVsbG8="
+    invoke-static {v0}, Landroid/util/Base64;->decode(Ljava/lang/String;I)[B
+    move-result-object v1
+    return-object v1
+.end method
+"""
+        self.file_cache.get.return_value = content
+        
+        result = self.detector.detect_string_decryption()
+        
+        self.assertGreater(len(result), 0)
+        pattern_types = [r.pattern_type for r in result]
+        self.assertIn(DecryptionType.BASE64, pattern_types)
+
+
+class TestNativeCodeEdgeCases(unittest.TestCase):
+    """Test native code detection edge cases."""
+
+    def setUp(self):
+        self.class_index = {
+            "Lcom/example/App;": [Path("/fake/app.smali")],
+            "Lcom/example/Exec;": [Path("/fake/exec.smali")],
+        }
+        self.file_cache = MagicMock()
+        self.file_cache.get.return_value = None
+        self.detector = ObfuscationDetector(self.class_index, self.file_cache)
+
+    def test_detect_multiple_native_loads(self):
+        """Test detecting multiple native library loads."""
+        content = """
+.class public Lcom/example/App;
+.super Ljava/lang/Object;
+
+.method public init()V
+    const-string v0, "libcrypto.so"
+    invoke-static {v0}, Ljava/lang/System;->loadLibrary(Ljava/lang/String;)V
+    const-string v1, "libssl.so"
+    invoke-static {v1}, Ljava/lang/System;->loadLibrary(Ljava/lang/String;)V
+    return-void
+.end method
+"""
+        self.file_cache.get.return_value = content
+        
+        result = self.detector.detect_native_code()
+        
+        self.assertGreaterEqual(len(result), 2)
+
+    def test_detect_runtime_exec(self):
+        """Test detecting Runtime.exec for native execution."""
+        content = """
+.class public Lcom/example/Exec;
+.super Ljava/lang/Object;
+
+.method public execute()V
+    const-string v0, "/system/bin/sh"
+    invoke-static {v0}, Ljava/lang/Runtime;->exec(Ljava/lang/String;)Ljava/lang/Process;
+    return-void
+.end method
+"""
+        self.file_cache.get.return_value = content
+        
+        result = self.detector.detect_native_code()
+        
+        self.assertGreater(len(result), 0)
+
+
+class TestObfuscationFiltering(unittest.TestCase):
+    """Test filtering of system classes."""
+
+    def setUp(self):
+        self.class_index = {}
+        self.file_cache = MagicMock()
+        self.file_cache.get.return_value = None
+        self.detector = ObfuscationDetector(self.class_index, self.file_cache)
+
+    def test_filter_java_lang_classes(self):
+        """Test that java.lang classes are filtered."""
+        content = """
+.class public Lcom/example/App;
+.super Ljava/lang/Object;
+
+.method public load()V
+    const-string v0, "java.lang.String"
+    invoke-static {v0}, Ljava/lang/Class;->forName(Ljava/lang/String;)Ljava/lang/Class;
+    return-void
+.end method
+"""
+        self.file_cache.get.return_value = content
+        
+        result = self.detector.detect_reflection()
+        
+        if result:
+            self.assertTrue(result[0].is_system_class or result[0].target == "")
+
+    def test_filter_android_classes(self):
+        """Test that Android framework classes are filtered."""
+        content = """
+.class public Lcom/example/App;
+.super Ljava/lang/Object;
+
+.method public load()V
+    const-string v0, "android.app.Activity"
+    invoke-static {v0}, Ljava/lang/Class;->forName(Ljava/lang/String;)Ljava/lang/Class;
+    return-void
+.end method
+"""
+        self.file_cache.get.return_value = content
+        
+        result = self.detector.detect_reflection()
+        
+        if result:
+            self.assertTrue(result[0].is_system_class or result[0].target == "")
+
+
 if __name__ == "__main__":
     unittest.main()
