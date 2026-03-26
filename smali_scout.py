@@ -1436,6 +1436,133 @@ class SmaliScoutCore:
             "dex_files": len(self.smali_dirs)
         }
 
+    def _analyze_sensitive_strings(self, code: str) -> Dict[str, Any]:
+        """Analisa strings sensíveis no código."""
+        sensitive_patterns = {
+            "credentials": [r'password', r'passwd', r'secret', r'token', r'api_?key', r'auth'],
+            "network": [r'http', r'https', r'www\.', r'api\.', r'endpoint', r'url'],
+            "personal": [r'email', r'phone', r'address', r'name', r'ssn', r'credit'],
+            "crypto": [r'iv', r'secret', r'key', r'encrypt', r'decrypt', r'cipher']
+        }
+        
+        found = {category: [] for category in sensitive_patterns}
+        
+        const_strings = re.findall(r'const-string\s+(\w+),\s*"([^"]+)"', code)
+        
+        for reg, value in const_strings:
+            value_lower = value.lower()
+            for category, patterns in sensitive_patterns.items():
+                for pattern in patterns:
+                    if re.search(pattern, value_lower):
+                        found[category].append({
+                            "register": reg,
+                            "value": value[:50] + "..." if len(value) > 50 else value
+                        })
+                        break
+        
+        return {
+            "total_sensitive": sum(len(v) for v in found.values()),
+            "by_category": {k: len(v) for k, v in found.items()},
+            "findings": found
+        }
+
+    def _analyze_dangerous_apis(self, code: str) -> List[Dict[str, Any]]:
+        """Analisa APIs perigosas/maliciosas."""
+        dangerous_apis = [
+            (r'Landroid/telephony/SmsManager;->sendTextMessage', 'SMS exfiltration', 'high'),
+            (r'Landroid/telephony/SmsManager;->sendMultipartTextMessage', 'SMS exfiltration', 'high'),
+            (r'Landroid/location/LocationManager;->getLastKnownLocation', 'Location access', 'medium'),
+            (r'Landroid/location/Location;->getLatitude', 'Location access', 'medium'),
+            (r'Ljavax/crypto/Cipher;->doFinal', 'Crypto operations', 'low'),
+            (r'Ljava/lang/Runtime;->exec', 'Command execution', 'high'),
+            (r'Ljava/lang/ProcessBuilder;->command', 'Command execution', 'high'),
+            (r'Landroid/webkit/WebView;->loadUrl', 'WebView loading', 'medium'),
+            (r'Landroid/webkit/WebView;->evaluateJavascript', 'JS execution', 'high'),
+            (r'Ljava/net/HttpURLConnection;->connect', 'Network access', 'low'),
+            (r'Lokhttp3/OkHttpClient;->newCall', 'Network access', 'low'),
+            (r'Landroid/content/SharedPreferences;->getString', 'Data storage', 'low'),
+            (r'Landroid/database/sqlite/SQLiteDatabase;->execSQL', 'Database query', 'medium'),
+            (r'Ljava/lang/ClassLoader;->loadClass', 'Dynamic loading', 'medium'),
+            (r'Ljava/lang/Class;->forName', 'Reflection', 'medium'),
+            (r'Ljava/lang/reflect/Method;->invoke', 'Reflection', 'medium'),
+            (r'Ljava/lang/System;->loadLibrary', 'Native library', 'medium'),
+            (r'Landroid/hardware/Camera;->open', 'Camera access', 'medium'),
+            (r'Landroid/media/AudioRecord;->startRecording', 'Microphone access', 'medium'),
+            (r'Landroid/hardware/fingerprint/FingerprintManager;->authenticate', 'Biometric', 'medium'),
+        ]
+        
+        findings = []
+        for api, description, severity in dangerous_apis:
+            if re.search(api, code):
+                findings.append({
+                    "api": api.split(";->")[-1],
+                    "description": description,
+                    "severity": severity
+                })
+        
+        return findings
+
+    def _analyze_intents(self, code: str) -> Dict[str, Any]:
+        """Analisa intents e ações de broadcast."""
+        intent_actions = re.findall(r'Landroid/content/Intent;-><init>\(Ljava/lang/String;\)V.*?const-string\s+(\w+),\s*"([^"]+)"', code, re.DOTALL)
+        
+        broadcast_receivers = re.findall(r'Landroid/content/BroadcastReceiver;', code)
+        activity_starts = re.findall(r'startActivity\s+', code)
+        service_starts = re.findall(r'startService\s+', code)
+        
+        implicit_intents = []
+        for action in re.findall(r'"([^"]+intent[^\"]+)"', code, re.IGNORECASE):
+            implicit_intents.append(action)
+        
+        return {
+            "intent_actions": len(intent_actions),
+            "broadcast_receivers": len(broadcast_receivers),
+            "activity_starts": len(activity_starts),
+            "service_starts": len(service_starts),
+            "implicit_intents": implicit_intents,
+            "total": len(intent_actions) + len(broadcast_receivers) + len(activity_starts) + len(service_starts)
+        }
+
+    def _analyze_native_code(self, code: str) -> Dict[str, Any]:
+        """Analisa código nativo (JNI)."""
+        load_library = re.findall(r'System\.loadLibrary\("([^"]+)"\)', code)
+        load = re.findall(r'System\.load\("([^"]+)"\)', code)
+        native_methods = re.findall(r'\.method\s+.*native\s+.*(\w+)\(', code)
+        
+        native_keyword = re.findall(r'native\s+', code)
+        
+        return {
+            "loadLibrary": load_library,
+            "load": load,
+            "native_methods": native_methods,
+            "native_count": len(native_methods),
+            "total_native_calls": len(load_library) + len(load)
+        }
+
+    def _analyze_memory_patterns(self, code: str) -> Dict[str, Any]:
+        """Analisa padrões de uso de memória."""
+        alloc_patterns = re.findall(r'new-instance\s+(\w+),', code)
+        
+        array_alloc = re.findall(r'new-array\s+(\w+),', code)
+        
+        string_alloc = re.findall(r'const-string\s+(\w+),', code)
+        
+        large_buffer = []
+        for b in re.findall(r'const/4\s+v\d+,\s*(0x[0-9a-f]+|\d+)', code):
+            try:
+                val = int(b, 16) if b.startswith('0x') else int(b)
+                if val > 1024:
+                    large_buffer.append(b)
+            except ValueError:
+                pass
+        
+        return {
+            "object_allocations": len(alloc_patterns),
+            "array_allocations": len(array_alloc),
+            "string_allocations": len(string_alloc),
+            "potential_buffers": len(large_buffer)
+        }
+
     def generate_code_metrics(self, code: str, class_sig: str) -> Dict[str, Any]:
         """Gera métricas completas de código."""
         method_count = self._count_methods(code)
@@ -1450,9 +1577,16 @@ class SmaliScoutCore:
         call_stats = self._analyze_call_statistics(code)
         security_patterns = self._analyze_security_patterns(code)
         dex_summary = self._analyze_dex_summary(class_sig)
+        sensitive_strings = self._analyze_sensitive_strings(code)
+        dangerous_apis = self._analyze_dangerous_apis(code)
+        intents = self._analyze_intents(code)
+        native_code = self._analyze_native_code(code)
+        memory_patterns = self._analyze_memory_patterns(code)
         
         total_instructions = sum(m.get("instructions", 0) for m in lines_per_method)
         avg_complexity = sum(c.get("complexity_score", 0) for c in complexity) / max(len(complexity), 1)
+        
+        high_severity_apis = len([a for a in dangerous_apis if a.get("severity") == "high"])
         
         return {
             "class": class_sig,
@@ -1467,6 +1601,11 @@ class SmaliScoutCore:
             "inheritance": inheritance,
             "call_statistics": call_stats,
             "security_patterns": security_patterns,
+            "sensitive_strings": sensitive_strings,
+            "dangerous_apis": dangerous_apis,
+            "intents": intents,
+            "native_code": native_code,
+            "memory_patterns": memory_patterns,
             "dex_summary": dex_summary,
             "summary": {
                 "total_methods": method_count["total"],
@@ -1479,7 +1618,12 @@ class SmaliScoutCore:
                 "unused_fields_count": len(dead_code.get("unused_fields", [])),
                 "large_methods_count": len(large_methods),
                 "inheritance_depth": inheritance.get("inheritance_depth", 1),
-                "security_issues_count": len(security_patterns)
+                "security_issues_count": len(security_patterns),
+                "sensitive_strings_count": sensitive_strings.get("total_sensitive", 0),
+                "dangerous_apis_count": len(dangerous_apis),
+                "high_risk_apis": high_severity_apis,
+                "native_methods_count": native_code.get("native_count", 0),
+                "intent_actions_count": intents.get("total", 0)
             }
         }
 
