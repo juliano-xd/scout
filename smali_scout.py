@@ -1563,6 +1563,119 @@ class SmaliScoutCore:
             "potential_buffers": len(large_buffer)
         }
 
+    def _analyze_android_components(self, code: str) -> Dict[str, Any]:
+        """Analisa componentes Android na classe."""
+        component_types = {
+            "activity": re.findall(r'Landroid/app/Activity;', code),
+            "service": re.findall(r'Landroid/app/Service;', code),
+            "broadcast_receiver": re.findall(r'Landroid/content/BroadcastReceiver;', code),
+            "content_provider": re.findall(r'Landroid/content/ContentProvider;', code),
+            "application": re.findall(r'Landroid/app/Application;', code),
+            "fragment": re.findall(r'Landroid/app/Fragment;', code),
+            "view": re.findall(r'Landroid/view/View;', code),
+        }
+        
+        lifecycle_methods = {
+            "onCreate": bool(re.search(r'onCreate\(', code)),
+            "onStart": bool(re.search(r'onStart\(', code)),
+            "onResume": bool(re.search(r'onResume\(', code)),
+            "onPause": bool(re.search(r'onPause\(', code)),
+            "onStop": bool(re.search(r'onStop\(', code)),
+            "onDestroy": bool(re.search(r'onDestroy\(', code)),
+            "onStartCommand": bool(re.search(r'onStartCommand\(', code)),
+            "onBind": bool(re.search(r'onBind\(', code)),
+            "onReceive": bool(re.search(r'onReceive\(', code)),
+        }
+        
+        has_lifecycle = any(lifecycle_methods.values())
+        
+        return {
+            "components": {k: len(v) for k, v in component_types.items()},
+            "total_components": sum(len(v) for v in component_types.values()),
+            "lifecycle_methods": lifecycle_methods,
+            "has_lifecycle": has_lifecycle
+        }
+
+    def _detect_malware_patterns(self, code: str) -> List[Dict[str, Any]]:
+        """Detecta padrões comuns de malware."""
+        malware_indicators = [
+            (r'Runtime\.getRuntime\(\)\.exec\(', 'Command injection', 'critical'),
+            (r'ProcessBuilder.*command.*Runtime', 'Process execution', 'high'),
+            (r'Runtime\.getRuntime\(\)\.loadLibrary\(', 'Dynamic native library', 'medium'),
+            (r'ClassLoader.*loadClass', 'Dynamic class loading', 'high'),
+            (r'Class\.forName\(', 'Reflection dynamic loading', 'medium'),
+            (r'Method.*invoke\(', 'Reflection invocation', 'medium'),
+            (r'Cipher.*doFinal', 'Custom encryption', 'medium'),
+            (r'SecretKeySpec', 'Hardcoded key', 'high'),
+            (r'Base64\.decode.*', 'Obfuscated data', 'medium'),
+            (r'SmsManager.*sendTextMessage', 'SMS exfiltration', 'critical'),
+            (r'getLastKnownLocation.*HttpURLConnection', 'Location exfiltration', 'critical'),
+            (r'Runtime\.getRuntime\(\)\.exit', 'Force close', 'medium'),
+            (r'isDebuggerConnected', 'Anti-debug', 'high'),
+            (r'System\.exit\(', 'App termination', 'medium'),
+            (r'getExternalStorage', 'External storage access', 'medium'),
+            (r'Runtime\.getRuntime\(\)\.availableProcessors', 'Anti-emulator', 'low'),
+            (r'Build\.MODEL.*getDeviceId', 'Device fingerprinting', 'high'),
+            (r'URL.*setRequestProperty.*User-Agent', 'User-Agent manipulation', 'low'),
+        ]
+        
+        findings = []
+        for pattern, description, severity in malware_indicators:
+            if re.search(pattern, code):
+                findings.append({
+                    "pattern": description,
+                    "severity": severity,
+                    "type": "malware_indicator"
+                })
+        
+        return findings
+
+    def _analyze_serialization(self, code: str) -> Dict[str, Any]:
+        """Analisa serialização e Parcelable."""
+        serializable = re.findall(r'Ljava/io/Serializable;', code)
+        parcelable = re.findall(r'Landroid/os/Parcelable;', code)
+        parcel_creator = re.findall(r'CREATOR', code)
+        write_toParcel = re.findall(r'writeToParcel', code)
+        describe_contents = re.findall(r'describeContents', code)
+        
+        return {
+            "serializable": len(serializable) > 0,
+            "parcelable": len(parcelable) > 0,
+            "has_creator": len(parcel_creator) > 0,
+            "has_writeToParcel": len(write_toParcel) > 0,
+            "has_describeContents": len(describe_contents) > 0
+        }
+
+    def generate_csv_metrics(self, code: str, class_sig: str) -> str:
+        """Gera métricas em formato CSV."""
+        metrics = self.generate_code_metrics(code, class_sig)
+        summary = metrics.get("summary", {})
+        
+        rows = [
+            f"Class,{class_sig}",
+            f"Total Methods,{summary.get('total_methods', 0)}",
+            f"Total Fields,{summary.get('total_fields', 0)}",
+            f"Total Parameters,{summary.get('total_parameters', 0)}",
+            f"Total Instructions,{summary.get('total_instructions', 0)}",
+            f"Average Complexity,{summary.get('avg_complexity', 0)}",
+            f"Uncalled Methods,{summary.get('uncalled_methods_count', 0)}",
+            f"Large Methods,{summary.get('large_methods_count', 0)}",
+            f"Inheritance Depth,{summary.get('inheritance_depth', 1)}",
+            f"Dangerous APIs,{summary.get('dangerous_apis_count', 0)}",
+            f"High Risk APIs,{summary.get('high_risk_apis', 0)}",
+            f"Sensitive Strings,{summary.get('sensitive_strings_count', 0)}",
+            f"Native Methods,{summary.get('native_methods_count', 0)}",
+            f"Intent Actions,{summary.get('intent_actions_count', 0)}",
+            "",
+            "Method Details",
+            "Method,Lines,Instructions,Complexity"
+        ]
+        
+        for method in metrics.get("lines_per_method", []):
+            rows.append(f"{method.get('method')},{method.get('lines')},{method.get('instructions')}")
+        
+        return "\n".join(rows)
+
     def generate_code_metrics(self, code: str, class_sig: str) -> Dict[str, Any]:
         """Gera métricas completas de código."""
         method_count = self._count_methods(code)
@@ -1582,11 +1695,15 @@ class SmaliScoutCore:
         intents = self._analyze_intents(code)
         native_code = self._analyze_native_code(code)
         memory_patterns = self._analyze_memory_patterns(code)
+        android_components = self._analyze_android_components(code)
+        malware_patterns = self._detect_malware_patterns(code)
+        serialization = self._analyze_serialization(code)
         
         total_instructions = sum(m.get("instructions", 0) for m in lines_per_method)
         avg_complexity = sum(c.get("complexity_score", 0) for c in complexity) / max(len(complexity), 1)
         
         high_severity_apis = len([a for a in dangerous_apis if a.get("severity") == "high"])
+        critical_malware = len([m for m in malware_patterns if m.get("severity") == "critical"])
         
         return {
             "class": class_sig,
@@ -1606,6 +1723,9 @@ class SmaliScoutCore:
             "intents": intents,
             "native_code": native_code,
             "memory_patterns": memory_patterns,
+            "android_components": android_components,
+            "malware_patterns": malware_patterns,
+            "serialization": serialization,
             "dex_summary": dex_summary,
             "summary": {
                 "total_methods": method_count["total"],
@@ -1623,7 +1743,11 @@ class SmaliScoutCore:
                 "dangerous_apis_count": len(dangerous_apis),
                 "high_risk_apis": high_severity_apis,
                 "native_methods_count": native_code.get("native_count", 0),
-                "intent_actions_count": intents.get("total", 0)
+                "intent_actions_count": intents.get("total", 0),
+                "android_components_count": android_components.get("total_components", 0),
+                "malware_indicators_count": len(malware_patterns),
+                "critical_malware_indicators": critical_malware,
+                "has_lifecycle": android_components.get("has_lifecycle", False)
             }
         }
 
