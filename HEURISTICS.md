@@ -14,6 +14,9 @@ This document defines the technical workflows, operational constraints, and know
    - Generate Frida scripts with `--frida`.
    - Inject static logging hooks with `--hook`.
 8. **Reporting:** Audit the generated `scout_report.json` for technical findings.
+9. **Variable Tracking:** Use `--track-var` to trace variable flow through methods.
+10. **Obfuscation Detection:** Use `--detect-obfuscation` to find reflection, string decryption, native code.
+11. **Advanced Data Flow:** Use `--analyze-data-flow` to detect sensitive data exfiltration.
 
 ## Operational Rules
 
@@ -30,6 +33,40 @@ This document defines the technical workflows, operational constraints, and know
 - **Risky Permissions:** Prioritized scanning for `SYSTEM_ALERT_WINDOW`, `READ_SMS`, and `RECEIVE_SMS`.
 - **Semantic Taints:** Identification of integer-based encryption modes and sensitive API flags via `const/4` tracking.
 - **UI Hybrid Mapping:** Fallback to `R.smali` parsing when `public.xml` is obfuscated or missing.
+
+## Advanced Tracking Modules
+
+### VariableFlowTracker (`--track-var`)
+- Tracks variable flow through multiple methods (inter-procedural)
+- Supports field read/write tracking
+- Branch analysis (if, switch statements)
+- Configurable depth (default: 10)
+- Usage points recorded for each operation
+
+### ObfuscationDetector (`--detect-obfuscation`)
+- **Reflection**: Class.forName, Method.invoke, Constructor.newInstance
+- **String Decryption**: Base64, XOR, custom crypto, byte arrays
+- **Native Code**: System.load, loadLibrary, Runtime.load
+- Risk level assessment (high/medium/low)
+
+### AdvancedTrackingEngine (`--analyze-data-flow`)
+- **Sensitive Sources**:
+  - Credentials: passwords, tokens, API keys
+  - Device Info: IMEI, MAC, device ID
+  - Location: GPS coordinates
+  - PII: contacts, SMS
+  - Biometric: fingerprint, face
+  - Camera/Microphone access
+  - URLs with parameters
+
+- **Exfiltration Sinks**:
+  - Network: HTTP, OkHttp, HttpURLConnection
+  - File: FileOutputStream, File write
+  - SharedPreferences, Database
+  - Log, Clipboard
+  - Intent extras, Bundle
+
+- **Crypto Detection**: Cipher, SecretKeySpec, MessageDigest
 
 ## Known Issues & Limitations
 
@@ -50,6 +87,11 @@ This document defines the technical workflows, operational constraints, and know
 - **Static Method Detection**: Only checks first 20 lines of method body.
 - **Type Parsing**: Some complex generic types may not parse correctly.
 
+### Advanced Tracking
+- **Variable Tracking**: Only tracks single variable, not full data flow
+- **Obfuscation**: Cannot detect encrypted strings without known patterns
+- **Data Flow**: Cross-method analysis requires method call relationships
+
 ### Performance Considerations
 - **XREF Depth**: Depth > 3 may cause high memory overhead in large DEX files.
 - **Search Limits**: 1000 results max by default, 100 matches per file.
@@ -65,6 +107,11 @@ The BehaviorEngine detects these patterns:
 | ANTI_ANALYSIS | isDebuggerConnected, System.exit |
 | LOCATION_TRACKING | LocationManager, LocationListener |
 | CONFIRMED_DATA_LEAK | Taint flow: IMEI → Network |
+| BIOMETRIC_ACCESS | BiometricPrompt.authenticate |
+| CAMERA_ACCESS | Camera.open |
+| MICROPHONE_ACCESS | AudioRecord.startRecording |
+| REFLECTION_DYNAMIC | Class.forName, Method.invoke |
+| STRING_DECRYPTION | Base64.decode, custom crypto |
 
 ## Scanner Modules
 
@@ -75,6 +122,7 @@ The BehaviorEngine detects these patterns:
 | crypto | Cipher, MessageDigest, SecretKeySpec |
 | strings | const-string |
 | integers | 0x..., decimal |
+| obfuscation | reflection, native, string decryption |
 
 ## Error Codes
 
