@@ -1143,10 +1143,87 @@ class SmaliScoutCore:
         
         return results
 
+    def _count_lines_per_method(self, code: str) -> List[Dict[str, Any]]:
+        """Conta linhas por método."""
+        lines = code.split('\n')
+        results = []
+        in_method = False
+        method_name = ""
+        line_count = 0
+        instructions = 0
+        
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith('.method'):
+                in_method = True
+                match = re.search(r'\.method\s+.*?(\w+)\(', stripped)
+                method_name = match.group(1) if match else "unknown"
+                line_count = 0
+                instructions = 0
+            elif in_method and stripped.startswith('.end method'):
+                results.append({
+                    "method": method_name,
+                    "lines": line_count,
+                    "instructions": instructions
+                })
+                in_method = False
+            elif in_method:
+                line_count += 1
+                if stripped and not stripped.startswith('.'):
+                    instructions += 1
+        
+        return results
+
+    def _analyze_complexity(self, code: str) -> List[Dict[str, Any]]:
+        """Analisa complexidade de código (branches, loops, exception handlers)."""
+        results = []
+        in_method = False
+        method_name = ""
+        
+        branches = 0
+        loops = 0
+        exceptions = 0
+        comparisons = 0
+        
+        for line in code.split('\n'):
+            stripped = line.strip()
+            
+            if stripped.startswith('.method'):
+                in_method = True
+                match = re.search(r'\.method\s+.*?(\w+)\(', stripped)
+                method_name = match.group(1) if match else "unknown"
+                branches = loops = exceptions = comparisons = 0
+            
+            elif in_method and stripped.startswith('.end method'):
+                results.append({
+                    "method": method_name,
+                    "branches": branches,
+                    "loops": loops,
+                    "exceptions": exceptions,
+                    "comparisons": comparisons,
+                    "complexity_score": branches + (loops * 2) + exceptions
+                })
+                in_method = False
+            
+            elif in_method:
+                if stripped.startswith(('if-', 'switch', 'sparse-switch', 'packed-switch')):
+                    branches += 1
+                if 'goto' in stripped:
+                    branches += 1
+                if stripped.startswith(('array-data', '.catch')):
+                    exceptions += 1
+                if any(x in stripped for x in ('cmpl-float', 'cmpg-float', 'cmpl-long', 'cmp-long', 'if-')):
+                    comparisons += 1
+        
+        return results
+
     def _detect_dead_code(self, code: str, class_sig: str) -> Dict[str, Any]:
-        """Detecta código morto (métodos não chamados)."""
+        """Detecta código morto (métodos, campos não utilizados)."""
         method_sig_p = re.compile(r'^\.method\s+(?:public|private|protected|static)?\s*(.*?)\(', re.MULTILINE)
         all_methods = method_sig_p.findall(code)
+        
+        field_p = re.compile(r'^\.field\s+(?:public|private|protected|static)?\s+(\w+):', re.MULTILINE)
+        all_fields = field_p.findall(code)
         
         invoke_p = re.compile(r'invoke-(\w+)\s+.*?,\s*([^;]+);->(\w+)\(', re.MULTILINE)
         called_methods = set()
@@ -1159,28 +1236,96 @@ class SmaliScoutCore:
         for match in invoke_static_p.finditer(code):
             called_methods.add(match.group(2))
         
-        uncalled = []
+        field_access_p = re.compile(r'(iget|iput|sget|sput)-(\w+)\s+.*?,\s*([^;]+);->(\w+)', re.MULTILINE)
+        accessed_fields = set()
+        for match in field_access_p.finditer(code):
+            accessed_fields.add(match.group(4))
+        
+        uncalled_methods = []
         for method in all_methods:
             method_name = method.split('(')[0] if '(' in method else method
             method_name_clean = method_name.strip()
             if method_name_clean and method_name_clean not in called_methods:
                 if not method_name_clean.startswith('<') and method_name_clean != '':
-                    uncalled.append(method_name_clean)
+                    uncalled_methods.append(method_name_clean)
+        
+        unused_fields = [f for f in all_fields if f not in accessed_fields]
         
         return {
-            "uncalled_methods": uncalled,
+            "uncalled_methods": uncalled_methods,
+            "unused_fields": unused_fields,
             "total_methods": len(all_methods),
-            "called_methods": list(called_methods)
+            "total_fields": len(all_fields),
+            "called_methods": list(called_methods),
+            "accessed_fields": list(accessed_fields)
         }
+
+    def _detect_large_methods(self, code: str, threshold: int = 50) -> List[Dict[str, Any]]:
+        """Detecta métodos muito grandes (acima do threshold)."""
+        large_methods = []
+        
+        lines = code.split('\n')
+        in_method = False
+        method_name = ""
+        line_count = 0
+        instructions = 0
+        
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith('.method'):
+                in_method = True
+                match = re.search(r'\.method\s+.*?(\w+)\(', stripped)
+                method_name = match.group(1) if match else "unknown"
+                line_count = 0
+                instructions = 0
+            elif in_method and stripped.startswith('.end method'):
+                if instructions >= threshold:
+                    large_methods.append({
+                        "method": method_name,
+                        "lines": line_count,
+                        "instructions": instructions,
+                        "severity": "high" if instructions >= 100 else "medium"
+                    })
+                in_method = False
+            elif in_method:
+                line_count += 1
+                if stripped and not stripped.startswith('.'):
+                    instructions += 1
+        
+        return large_methods
 
     def generate_code_metrics(self, code: str, class_sig: str) -> Dict[str, Any]:
         """Gera métricas completas de código."""
+        method_count = self._count_methods(code)
+        param_count = self._count_parameters(code)
+        var_count = self._count_variables(code)
+        lines_per_method = self._count_lines_per_method(code)
+        complexity = self._analyze_complexity(code)
+        dead_code = self._detect_dead_code(code, class_sig)
+        large_methods = self._detect_large_methods(code)
+        
+        total_instructions = sum(m.get("instructions", 0) for m in lines_per_method)
+        avg_complexity = sum(c.get("complexity_score", 0) for c in complexity) / max(len(complexity), 1)
+        
         return {
             "class": class_sig,
-            "method_count": self._count_methods(code),
-            "parameter_count": self._count_parameters(code),
-            "variable_count": self._count_variables(code),
-            "dead_code": self._detect_dead_code(code, class_sig)
+            "method_count": method_count,
+            "parameter_count": param_count,
+            "variable_count": var_count,
+            "lines_per_method": lines_per_method,
+            "complexity_analysis": complexity,
+            "dead_code": dead_code,
+            "large_methods": large_methods,
+            "summary": {
+                "total_methods": method_count["total"],
+                "total_parameters": sum(p["params"] for p in param_count),
+                "total_variables": sum(v["variables"] for v in var_count),
+                "total_instructions": total_instructions,
+                "avg_complexity": round(avg_complexity, 2),
+                "uncalled_methods_count": len(dead_code.get("uncalled_methods", [])),
+                "unused_fields_count": len(dead_code.get("unused_fields", [])),
+                "large_methods_count": len(large_methods)
+            }
         }
 
     def _build_index(self):

@@ -188,6 +188,59 @@ class TestMetricsIntegration(unittest.TestCase):
         self.assertIn("parameter_count", result)
         self.assertIn("variable_count", result)
         self.assertIn("dead_code", result)
+        self.assertIn("lines_per_method", result)
+        self.assertIn("complexity_analysis", result)
+        self.assertIn("large_methods", result)
+        self.assertIn("summary", result)
+
+    def test_count_lines_per_method(self):
+        """Test line counting per method."""
+        code = """
+.class public Lcom/example/Test;
+.super Ljava/lang/Object;
+
+.method public testMethod()V
+    .registers 2
+    const/4 v0, 0x1
+    return-void
+.end method
+"""
+        result = self.core._count_lines_per_method(code)
+        self.assertGreater(len(result), 0)
+        self.assertIn("lines", result[0])
+        self.assertIn("instructions", result[0])
+
+    def test_analyze_complexity(self):
+        """Test complexity analysis."""
+        code = """
+.class public Lcom/example/Test;
+.super Ljava/lang/Object;
+
+.method public complexMethod()V
+    .registers 3
+    const/4 v0, 0x1
+    if-gt v0, v1, :cond_1
+    return-void
+:end method
+"""
+        result = self.core._analyze_complexity(code)
+        self.assertIsInstance(result, list)
+
+    def test_detect_large_methods(self):
+        """Test detecting large methods."""
+        code = """
+.class public Lcom/example/Test;
+.super Ljava/lang/Object;
+
+.method public bigMethod()V
+    .registers 5
+"""
+        for i in range(60):
+            code += f"    const/4 v{i % 5}, {i}\n"
+        code += "    return-void\n.end method\n"
+        
+        result = self.core._detect_large_methods(code, threshold=50)
+        self.assertGreater(len(result), 0)
 
 
 if __name__ == "__main__":
