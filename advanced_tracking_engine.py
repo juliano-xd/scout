@@ -3,11 +3,50 @@
 AdvancedTrackingEngine - Módulo de análise profunda de código Smali.
 
 Funcionalidades:
-- Taint analysis avançado com mais sources/sinks
-- Data Leak Detection (detecção de exfiltração de dados)
-- Crypto Analysis (detecção de crypto maluco)
-- Sensitive Data Tracking
-- Network Exfiltration Detection
+    - Taint analysis avançado com sources/sinks estendidos
+    - Data Leak Detection (detecção de exfiltração de dados)
+    - Crypto Analysis (detecção de crypto operations)
+    - Sensitive Data Tracking (credenciais, PII, device info)
+    - Network Exfiltration Detection
+    - URL/Parameter Extraction Detection
+    - Method Chaining Detection (builder patterns)
+    - Cross-method Data Flow Analysis
+    - Risk Assessment com recomendações
+
+Uso:
+    from advanced_tracking_engine import AdvancedTrackingEngine
+    engine = AdvancedTrackingEngine(class_index, file_cache)
+    result = engine.analyze_class("Lcom/example/Class;")
+
+Exemplo de output (JSON):
+    {
+        "summary": {
+            "total_sources": 5,
+            "total_sinks": 3,
+            "total_flows": 2,
+            "risk_level": "high",
+            "recommendations": [...]
+        },
+        "sources": [...],
+        "sinks": [...],
+        "data_flows": [...]
+    }
+
+Fontes detectadas:
+    - Credentials: passwords, tokens, API keys
+    - Device Info: IMEI, MAC, device ID
+    - Location: GPS coordinates
+    - PII: contacts, SMS
+    - Biometric: fingerprint, face
+    - Camera/Microphone access
+    - URLs com parâmetros
+
+Sinks detectadas:
+    - Network: HTTP, OkHttp, HttpURLConnection
+    - File: FileOutputStream, File write
+    - SharedPreferences, Database
+    - Log, Clipboard
+    - Intent extras, Bundle
 """
 
 import re

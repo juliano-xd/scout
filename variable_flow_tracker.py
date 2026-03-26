@@ -4,6 +4,28 @@ VariableFlowTracker - Análise inter-procedural de variável específica.
 
 Rastreia o fluxo de uma variável através de múltiplos métodos,
 campos e ramificações, com suporte a profundidade configurável.
+
+Uso:
+    from variable_flow_tracker import VariableFlowTracker
+    tracker = VariableFlowTracker(class_index, file_cache, inheritance_engine, xref_engine, max_depth=10)
+    result = tracker.track_variable("Lcom/example/Class;", "methodName", "p2")
+
+Funcionalidades:
+    - Tracking recursivo de variáveis através de métodos
+    - Suporte a campos (field read/write)
+    - Rastreamento em ramificações (if, switch)
+    - Profundidade configurável
+    - Integração com XREF e Inheritance engines
+
+Exemplo de output:
+    {
+        "method": "Lcom/example/Login;->authenticate(Ljava/lang/String;)V",
+        "variable": "p2",
+        "depth": 3,
+        "flows": [...],
+        "usage_points": [...],
+        "limite_atingido": false
+    }
 """
 
 import re

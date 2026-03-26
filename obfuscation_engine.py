@@ -6,6 +6,25 @@ Detecta:
 - Reflection dinâmica (Class.forName, Method.invoke, etc)
 - String deobfuscation (Base64, XOR, crypto custom)
 - Código nativo (System.load, JNI, etc)
+
+Uso:
+    from obfuscation_engine import ObfuscationDetector
+    detector = ObfuscationDetector(class_index, file_cache)
+    result = detector.analyze_class("Lcom/example/Class;")
+
+Exemplo de output:
+    {
+        "reflection_findings": [...],
+        "string_decryptions": [...],
+        "native_calls": [...],
+        "risk_level": "high|medium|low",
+        "recommendations": [...]
+    }
+
+支持的检测类型:
+    - Reflection: Class.forName, Method.invoke, Constructor.newInstance
+    - Strings: Base64 decode, XOR, custom crypto, string concat
+    - Native: System.load, System.loadLibrary, Runtime.load
 """
 
 import re

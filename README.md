@@ -7,28 +7,36 @@ Scout is a technical framework for Android static analysis, security auditing, a
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                        SmaliScout CLI                           │
-│                  (smali_scout.py - 2405 lines)                 │
+│                  (smali_scout.py - 2730 lines)                 │
 └─────────────────────┬───────────────────────────────────────────┘
                       │
-        ┌─────────────┼─────────────┬─────────────┬─────────────┐
-        ▼             ▼             ▼             ▼             ▼
+      ┌───────────────┼───────────────┬───────────────┬───────────┐
+      ▼               ▼               ▼               ▼           ▼
 ┌──────────────┐ ┌──────────┐ ┌───────────┐ ┌──────────┐ ┌──────────┐
-│   Tracking   │ │  CFG     │ │ Semantic  │ │ Inheritance│ │  Frida  │
-│   Engine     │ │ Engine   │ │ Engine    │ │ Engine    │ │ Engine  │
-│  (XREF+Taint)│ │ (CFG)    │ │(Translate)│ │(BFS Hier.)│ │(Hooks)  │
+│   Tracking   │ │  CFG     │ │ Semantic  │ │ Inherit. │ │  Frida   │
+│   Engine     │ │ Engine   │ │ Engine    │ │ Engine   │ │ Engine   │
+│  (XREF+Taint)│ │ (CFG)    │ │(Translate)│ │(BFS)     │ │(Hooks)   │
 └──────────────┘ └──────────┘ └───────────┘ └──────────┘ └──────────┘
-        │             │             │             │             │
-        └─────────────┼─────────────┼─────────────┼─────────────┘
-                      ▼             ▼             ▼
+      │               │               │               │           │
+      └───────────────┼───────────────┼───────────────┼───────────┘
+                      ▼               ▼               ▼
               ┌──────────────┐ ┌──────────┐ ┌──────────┐
-              │ UI Engine    │ │ Reasoning │ │ Behavior │
-              │(UI Tracing)  │ │ Engine    │ │ Engine   │
+              │ UI Engine    │ │Reasoning │ │Behavior  │
+              │(UI Tracing)  │ │ Engine   │ │ Engine   │
               └──────────────┘ └──────────┘ └──────────┘
-                               │
-                               ▼
+                              │
+         ┌────────────────────┼────────────────────┐
+         ▼                    ▼                    ▼
+┌──────────────────┐ ┌────────────────────┐ ┌──────────────────┐
+│VariableFlowTracker│ │ObfuscationDetector│ │AdvancedTracking  │
+│ (Inter-procedural│ │ (Reflection/String│ │ (Sources/Sinks   │
+│  Variable Track) │ │  Native Detection) │ │  Crypto Analysis)│
+└──────────────────┘ └────────────────────┘ └──────────────────┘
+                              │
+                              ▼
               ┌────────────────────────────────┐
               │     ScoutKnowledge (SQLite)    │
-              │   (Framework + DFA Hints)      │
+              │   (Framework + DFA Hints)       │
               └────────────────────────────────┘
 ```
 
@@ -73,6 +81,29 @@ Scout is a technical framework for Android static analysis, security auditing, a
 - Cross-engine correlation
 - AI-ready summary generation
 
+### 9. VariableFlowTracker (`variable_flow_tracker.py`)
+- **Inter-procedural variable tracking**: Rastreia variável através de múltiplos métodos
+- **Field tracking**: Suporte a leitura/escrita de campos (field)
+- **Branch analysis**: Rastreamento em ramificações (if, switch)
+- **Depth control**: Profundidade configurável (padrão: 10)
+- **Usage points**: Registra cada operação com a variável
+
+### 10. ObfuscationDetector (`obfuscation_engine.py`)
+- **Reflection detection**: Class.forName, Method.invoke, Constructor.newInstance
+- **String decryption**: Base64, XOR, custom crypto, byte arrays
+- **Native code**: System.load, loadLibrary, Runtime.load, JNI
+- **Risk assessment**: Avalia nível de obfuscação
+
+### 11. AdvancedTrackingEngine (`advanced_tracking_engine.py`)
+- **Sensitive sources**: Credentials, Device Info, Location, PII, Biometric, Camera, Mic
+- **Exfiltration sinks**: Network, File, SharedPrefs, Database, Log, Clipboard, Intent, Bundle
+- **Crypto detection**: Cipher, SecretKeySpec, MessageDigest
+- **Data flow matching**: Associa sources a sinks
+- **Risk assessment**: Gera recomendações de segurança
+- **Cross-method flows**: Detecta fluxos entre métodos
+- **Method chaining**: Detecta padrões builder (StringBuilder, OkHttp)
+- **URL extraction**: Detecta URLs com parâmetros sensíveis
+
 ## Operational Capabilities
 
 - **Atomic Bytecode Patching:** Safe modification of Smali files using transactional OS-level operations.
@@ -106,6 +137,14 @@ Scout is a technical framework for Android static analysis, security auditing, a
 | `--generate-hook-class` | Generate ScoutHook.smali. |
 | `--graph` | Export class dependency graph. |
 | `--export` | Serialize analysis results to JSON format. |
+| `--track-var` | Track variable flow through methods (inter-procedural). |
+| `--track-var-name` | Variable name to track (default: p2). |
+| `--track-depth` | Maximum depth for variable tracking (default: 10). |
+| `--detect-obfuscation` | Detect obfuscation techniques (reflection, strings, native). |
+| `--obf-types` | Obfuscation types: reflection, strings, native, all. |
+| `--obf-depth` | Depth for dynamic tracking (default: 3). |
+| `--analyze-data-flow` | Analyze sensitive data flows in a class. |
+| `--data-flow-depth` | Depth for data flow analysis (default: 2). |
 
 ## Known Limitations
 
@@ -132,17 +171,20 @@ pytest tests/ -v
 
 ```
 scout/
-├── smali_scout.py          # Main CLI (2405 lines)
-├── tracking_engine.py       # XREF + Taint analysis
-├── cfg_engine.py           # Control flow graphs
-├── semantic_engine.py       # Pseudocode translation
-├── inheritance_engine.py   # Hierarchy resolution
-├── frida_engine.py         # Hook generation
-├── ui_engine.py            # UI tracing
-├── behavior_engine.py      # Behavioral fingerprints
-├── reasoning_engine.py     # AI summaries
-├── scout_knowledge.py      # SQLite knowledge base
-├── tests/                 # Test suite (25+ files)
+├── smali_scout.py          # Main CLI (2730 lines)
+├── tracking_engine.py     # XREF + Taint analysis
+├── variable_flow_tracker.py # Inter-procedural variable tracking
+├── obfuscation_engine.py  # Obfuscation detection (reflection, native)
+├── advanced_tracking_engine.py # Sources/sinks, crypto, data flow
+├── cfg_engine.py          # Control flow graphs
+├── semantic_engine.py     # Pseudocode translation
+├── inheritance_engine.py  # Hierarchy resolution
+├── frida_engine.py        # Hook generation
+├── ui_engine.py           # UI tracing
+├── behavior_engine.py     # Behavioral fingerprints
+├── reasoning_engine.py    # AI summaries
+├── scout_knowledge.py    # SQLite knowledge base
+├── tests/                 # Test suite (26+ files, 150+ tests)
 ├── README.md              # This file
 └── HEURISTICS.md          # Analysis protocols
 ```
