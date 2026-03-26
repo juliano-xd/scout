@@ -145,6 +145,7 @@ Scout is a technical framework for Android static analysis, security auditing, a
 | `--obf-depth` | Depth for dynamic tracking (default: 3). |
 | `--analyze-data-flow` | Analyze sensitive data flows in a class. |
 | `--data-flow-depth` | Depth for data flow analysis (default: 2). |
+| `--code-metrics` | Generate code metrics (methods, parameters, variables, dead code). |
 
 ## Known Limitations
 

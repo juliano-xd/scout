@@ -1076,6 +1076,113 @@ class SmaliScoutCore:
             return p
         return None
 
+    def _count_methods(self, code: str) -> Dict[str, Any]:
+        """Conta métodos em uma classe Smali."""
+        method_p = re.compile(r'^\.method\s+(public|private|protected|static)?\s*(.*?)\(', re.MULTILINE)
+        methods = method_p.findall(code)
+        
+        total = len(methods)
+        public_count = sum(1 for m in methods if m[0] == 'public')
+        private_count = sum(1 for m in methods if m[0] == 'private')
+        protected_count = sum(1 for m in methods if m[0] == 'protected')
+        static_count = sum(1 for m in methods if 'static' in m[0])
+        
+        return {
+            "total": total,
+            "public": public_count,
+            "private": private_count,
+            "protected": protected_count,
+            "static": static_count
+        }
+
+    def _count_parameters(self, code: str) -> List[Dict[str, Any]]:
+        """Conta parâmetros por método."""
+        method_lines = []
+        in_method = False
+        method_start = ""
+        
+        for line in code.split('\n'):
+            if line.strip().startswith('.method'):
+                in_method = True
+                method_start = line.strip()
+            elif in_method and line.strip().startswith('.end method'):
+                in_method = False
+                method_lines.append(method_start)
+            elif in_method:
+                pass
+        
+        results = []
+        for method_line in method_lines:
+            match = re.search(r'\(([^)]*)\)', method_line)
+            if match:
+                params_str = match.group(1)
+                if not params_str.strip():
+                    results.append({"params": 0})
+                else:
+                    param_types = params_str.replace(" ", "").replace("/", "").replace(";", "")
+                    param_count = len([c for c in param_types if c in 'BCSIJFDVZ'])
+                    results.append({"params": param_count})
+            else:
+                results.append({"params": 0})
+        
+        return results
+
+    def _count_variables(self, code: str) -> List[Dict[str, Any]]:
+        """Conta variáveis usadas por método."""
+        method_p = re.compile(r'^\.method\s+.*?\).*?\.registers\s+(\d+)', re.MULTILINE)
+        
+        results = []
+        for match in method_p.finditer(code):
+            registers = int(match.group(1))
+            results.append({"variables": registers})
+        
+        if not results:
+            method_p = re.compile(r'(const|move|aget|sget|invoke)', re.MULTILINE)
+            var_count = len(method_p.findall(code))
+            results.append({"variables": min(var_count, 16)})
+        
+        return results
+
+    def _detect_dead_code(self, code: str, class_sig: str) -> Dict[str, Any]:
+        """Detecta código morto (métodos não chamados)."""
+        method_sig_p = re.compile(r'^\.method\s+(?:public|private|protected|static)?\s*(.*?)\(', re.MULTILINE)
+        all_methods = method_sig_p.findall(code)
+        
+        invoke_p = re.compile(r'invoke-(\w+)\s+.*?,\s*([^;]+);->(\w+)\(', re.MULTILINE)
+        called_methods = set()
+        
+        for match in invoke_p.finditer(code):
+            method_name = match.group(3)
+            called_methods.add(method_name)
+        
+        invoke_static_p = re.compile(r'invoke-static\s+\{[^}]+\},\s*([^;]+);->(\w+)\(', re.MULTILINE)
+        for match in invoke_static_p.finditer(code):
+            called_methods.add(match.group(2))
+        
+        uncalled = []
+        for method in all_methods:
+            method_name = method.split('(')[0] if '(' in method else method
+            method_name_clean = method_name.strip()
+            if method_name_clean and method_name_clean not in called_methods:
+                if not method_name_clean.startswith('<') and method_name_clean != '':
+                    uncalled.append(method_name_clean)
+        
+        return {
+            "uncalled_methods": uncalled,
+            "total_methods": len(all_methods),
+            "called_methods": list(called_methods)
+        }
+
+    def generate_code_metrics(self, code: str, class_sig: str) -> Dict[str, Any]:
+        """Gera métricas completas de código."""
+        return {
+            "class": class_sig,
+            "method_count": self._count_methods(code),
+            "parameter_count": self._count_parameters(code),
+            "variable_count": self._count_variables(code),
+            "dead_code": self._detect_dead_code(code, class_sig)
+        }
+
     def _build_index(self):
         logger.info(f"[INDEXER] Scanning: {self.root_dir.name}")
         header_p = re.compile(
@@ -2377,6 +2484,11 @@ Introspecção em JSON:
         help="Detecta técnicas de obfuscação (reflection, strings, native).",
     )
     parser.add_argument(
+        "--code-metrics",
+        metavar="CLASS_SIGNATURE",
+        help="Gera métricas de código (métodos, parâmetros, variáveis, dead code).",
+    )
+    parser.add_argument(
         "--obf-types",
         nargs="*",
         choices=["reflection", "strings", "native", "all"],
@@ -2813,6 +2925,34 @@ def main():
             
             core.report["findings"]["obfuscation"] = result
             should_save_report = True
+
+        if args.code_metrics:
+            class_sig = args.code_metrics
+            if not class_sig.endswith(";"):
+                class_sig += ";"
+            
+            paths = core.class_index.get(class_sig, [])
+            if not paths:
+                logger.error(f"[METRICS] Class not found: {class_sig}")
+            else:
+                content = core.read(paths[0])
+                if content:
+                    result = core.generate_code_metrics(content, class_sig)
+                    
+                    if args.machine_json:
+                        import json
+                        print(json.dumps(result, indent=2, ensure_ascii=False))
+                    else:
+                        print(f"\n=== Code Metrics: {class_sig} ===")
+                        print(f"Methods: {result['method_count']['total']} (public: {result['method_count']['public']}, private: {result['method_count']['private']})")
+                        print(f"Parameters: {sum(p['params'] for p in result['parameter_count'])} total")
+                        print(f"Variables: {sum(v['variables'] for v in result['variable_count'])} total")
+                        print(f"Dead code (uncalled methods): {len(result['dead_code']['uncalled_methods'])}")
+                        print("=" * 30)
+                        print(json.dumps(result, indent=2))
+                    
+                    core.report["findings"]["code_metrics"] = result
+                    should_save_report = True
 
         if args.analyze_data_flow:
             import json
