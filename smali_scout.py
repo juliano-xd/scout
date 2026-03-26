@@ -984,7 +984,7 @@ class SmaliScoutCore:
         self.file_cache = LRUCache(capacity=cache_size)
         self.scanner_threads = scanner_threads
         self.progress_reporter = ProgressReporter(progress_callback)
-        self.kb = ScoutKnowledge() # Central Knowledge Base
+        self.kb = ScoutKnowledge()
         self.tracking_engine = TrackingEngine(self.class_index, self.file_cache, self.kb)
         self.inheritance_engine = InheritanceEngine(self.class_index, self.read, self.kb)
         self.frida_engine = FridaEngine(self.inheritance_engine)
@@ -994,12 +994,66 @@ class SmaliScoutCore:
         self.behavior_engine = BehaviorEngine()
         self.cfg_engine = CFGEngine()
         self.verbose = verbose
+        
+        self._init_compiled_patterns()
+        self._metrics_cache = {}
+        
         self._build_index()
         self.ui_engine.build_resource_map()
-        # Fallback if public.xml analysis failed or was empty
         if not self.ui_engine.id_to_name:
             self.ui_engine.scan_r_classes(self.class_index, self.read)
         self.ui_engine.scan_layouts()
+
+    def _init_compiled_patterns(self):
+        """Inicializa patterns compilados uma vez."""
+        self._patterns = {
+            "method": re.compile(r'^\.method\s+(public|private|protected|static)?\s*(.*?)\(', re.MULTILINE),
+            "field": re.compile(r'^\.field\s+(?:public|private|protected|static|final)?\s*(\w+):([^=]+)', re.MULTILINE),
+            "field_simple": re.compile(r'^\.field\s+(?:public|private|protected|static)?\s+(\w+):', re.MULTILINE),
+            "super": re.compile(r'^\.super\s+(L[^;]+;)', re.MULTILINE),
+            "implements": re.compile(r'^\.implements\s+(L[^;]+;)', re.MULTILINE),
+            "const_string": re.compile(r'const-string\s+(\w+),\s*"([^"]+)"', re.MULTILINE),
+            "invoke_virtual": re.compile(r'invoke-virtual\s+.*?,\s*([^;]+);->(\w+)\(', re.MULTILINE),
+            "invoke_static": re.compile(r'invoke-static\s+\{[^}]+\},\s*([^;]+);->(\w+)\(', re.MULTILINE),
+            "invoke_direct": re.compile(r'invoke-direct\s+.*?,\s*([^;]+);->(\w+)\(', re.MULTILINE),
+            "invoke_direct": re.compile(r'invoke-direct\s+.*?,\s*([^;]+);->(\w+)\(', re.MULTILINE),
+            "registers": re.compile(r'^\.method\s+.*?\).*?\.registers\s+(\d+)', re.MULTILINE),
+            "new_instance": re.compile(r'new-instance\s+(\w+),', re.MULTILINE),
+            "new_array": re.compile(r'new-array\s+(\w+),', re.MULTILINE),
+            "load_library": re.compile(r'System\.loadLibrary\("([^"]+)"\)', re.MULTILINE),
+            "load": re.compile(r'System\.load\("([^"]+)"\)', re.MULTILINE),
+            "native_method": re.compile(r'\.method\s+.*native\s+.*(\w+)\(', re.MULTILINE),
+            "const_large": re.compile(r'const/4\s+v\d+,\s*(0x[0-9a-f]+|\d+)', re.MULTILINE),
+            "activity": re.compile(r'Landroid/app/Activity;', re.MULTILINE),
+            "service": re.compile(r'Landroid/app/Service;', re.MULTILINE),
+            "receiver": re.compile(r'Landroid/content/BroadcastReceiver;', re.MULTILINE),
+            "provider": re.compile(r'Landroid/content/ContentProvider;', re.MULTILINE),
+            "sms_send": re.compile(r'Landroid/telephony/SmsManager;->sendTextMessage', re.MULTILINE),
+            "location": re.compile(r'Landroid/location/LocationManager;->getLastKnownLocation', re.MULTILINE),
+            "runtime_exec": re.compile(r'Runtime\.getRuntime\(\)\.exec\(', re.MULTILINE),
+            "classloader": re.compile(r'ClassLoader.*loadClass', re.MULTILINE),
+            "reflection": re.compile(r'Class\.forName\(|Method.*invoke\(', re.MULTILINE),
+            "cipher": re.compile(r'Ljavax/crypto/Cipher;', re.MULTILINE),
+            "secretkey": re.compile(r'SecretKeySpec', re.MULTILINE),
+            "base64": re.compile(r'Landroid/util/Base64;->decode', re.MULTILINE),
+            "crypto": re.compile(r'Ljava/security/MessageDigest;', re.MULTILINE),
+            "keystore": re.compile(r'Ljava/security/KeyStore;', re.MULTILINE),
+        }
+    
+    def _get_cached_metrics(self, class_sig: str, code: str) -> Dict[str, Any]:
+        """Retorna métricas do cache ou calcula."""
+        cache_key = f"{class_sig}:{hash(code)}"
+        
+        if cache_key in self._metrics_cache:
+            return self._metrics_cache[cache_key]
+        
+        result = self.generate_code_metrics(code, class_sig)
+        self._metrics_cache[cache_key] = result
+        
+        if len(self._metrics_cache) > 1000:
+            self._metrics_cache.clear()
+        
+        return result
 
     def _get_numeric_smali_dirs(self):
         dirs = [
@@ -1078,8 +1132,7 @@ class SmaliScoutCore:
 
     def _count_methods(self, code: str) -> Dict[str, Any]:
         """Conta métodos em uma classe Smali."""
-        method_p = re.compile(r'^\.method\s+(public|private|protected|static)?\s*(.*?)\(', re.MULTILINE)
-        methods = method_p.findall(code)
+        methods = self._patterns["method"].findall(code)
         
         total = len(methods)
         public_count = sum(1 for m in methods if m[0] == 'public')
@@ -1219,21 +1272,15 @@ class SmaliScoutCore:
 
     def _detect_dead_code(self, code: str, class_sig: str) -> Dict[str, Any]:
         """Detecta código morto (métodos, campos não utilizados)."""
-        method_sig_p = re.compile(r'^\.method\s+(?:public|private|protected|static)?\s*(.*?)\(', re.MULTILINE)
-        all_methods = method_sig_p.findall(code)
+        all_methods = self._patterns["method"].findall(code)
+        all_fields = self._patterns["field_simple"].findall(code)
         
-        field_p = re.compile(r'^\.field\s+(?:public|private|protected|static)?\s+(\w+):', re.MULTILINE)
-        all_fields = field_p.findall(code)
-        
-        invoke_p = re.compile(r'invoke-(\w+)\s+.*?,\s*([^;]+);->(\w+)\(', re.MULTILINE)
         called_methods = set()
         
-        for match in invoke_p.finditer(code):
-            method_name = match.group(3)
-            called_methods.add(method_name)
+        for match in self._patterns["invoke_virtual"].finditer(code):
+            called_methods.add(match.group(2))
         
-        invoke_static_p = re.compile(r'invoke-static\s+\{[^}]+\},\s*([^;]+);->(\w+)\(', re.MULTILINE)
-        for match in invoke_static_p.finditer(code):
+        for match in self._patterns["invoke_static"].finditer(code):
             called_methods.add(match.group(2))
         
         field_access_p = re.compile(r'(iget|iput|sget|sput)-(\w+)\s+.*?,\s*([^;]+);->(\w+)', re.MULTILINE)
@@ -1243,8 +1290,10 @@ class SmaliScoutCore:
         
         uncalled_methods = []
         for method in all_methods:
-            method_name = method.split('(')[0] if '(' in method else method
-            method_name_clean = method_name.strip()
+            method_tuple = method
+            method_name = method_tuple[1] if isinstance(method_tuple, tuple) else method
+            method_name = method_name.split('(')[0] if '(' in method_name else method_name
+            method_name_clean = method_name.strip() if isinstance(method_name, str) else str(method_name).strip()
             if method_name_clean and method_name_clean not in called_methods:
                 if not method_name_clean.startswith('<') and method_name_clean != '':
                     uncalled_methods.append(method_name_clean)
@@ -1296,9 +1345,7 @@ class SmaliScoutCore:
 
     def _analyze_fields(self, code: str) -> Dict[str, Any]:
         """Analisa campos (fields) da classe."""
-        field_p = re.compile(r'^\.field\s+(?:public|private|protected|static|final)?\s*(\w+):([^=]+)', re.MULTILINE)
-        
-        fields = field_p.findall(code)
+        fields = self._patterns["field"].findall(code)
         
         static_count = 0
         instance_count = 0
@@ -1360,12 +1407,12 @@ class SmaliScoutCore:
 
     def _analyze_call_statistics(self, code: str) -> Dict[str, Any]:
         """Analisa estatísticas de chamadas de métodos."""
-        invoke_virtual = len(re.findall(r'invoke-virtual\s+', code))
-        invoke_static = len(re.findall(r'invoke-static\s+', code))
-        invoke_direct = len(re.findall(r'invoke-direct\s+', code))
+        invoke_virtual = len(self._patterns["invoke_virtual"].findall(code))
+        invoke_static = len(self._patterns["invoke_static"].findall(code))
+        invoke_direct = len(self._patterns["invoke_direct"].findall(code))
         invoke_super = len(re.findall(r'invoke-super\s+', code))
         
-        new_instances = len(re.findall(r'new-instance\s+', code))
+        new_instances = len(self._patterns["new_instance"].findall(code))
         
         return {
             "virtual_calls": invoke_virtual,
