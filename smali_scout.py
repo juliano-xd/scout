@@ -1294,6 +1294,148 @@ class SmaliScoutCore:
         
         return large_methods
 
+    def _analyze_fields(self, code: str) -> Dict[str, Any]:
+        """Analisa campos (fields) da classe."""
+        field_p = re.compile(r'^\.field\s+(?:public|private|protected|static|final)?\s*(\w+):([^=]+)', re.MULTILINE)
+        
+        fields = field_p.findall(code)
+        
+        static_count = 0
+        instance_count = 0
+        final_count = 0
+        private_count = 0
+        public_count = 0
+        
+        for field_name, field_type in fields:
+            if 'static' in field_type:
+                static_count += 1
+            else:
+                instance_count += 1
+            if 'final' in field_type:
+                final_count += 1
+            if 'private' in field_type:
+                private_count += 1
+            if 'public' in field_type:
+                public_count += 1
+        
+        return {
+            "total": len(fields),
+            "static": static_count,
+            "instance": instance_count,
+            "final": final_count,
+            "private": private_count,
+            "public": public_count,
+            "fields": [{"name": n, "type": t.strip()} for n, t in fields]
+        }
+
+    def _analyze_inheritance(self, code: str, class_sig: str) -> Dict[str, Any]:
+        """Analisa profundidade de herança."""
+        super_p = re.compile(r'^\.super\s+(L[^;]+;)', re.MULTILINE)
+        implements_p = re.compile(r'^\.implements\s+(L[^;]+;)', re.MULTILINE)
+        
+        super_class = super_p.search(code)
+        interfaces = implements_p.findall(code)
+        
+        depth = 1
+        current_sig = super_class.group(1) if super_class else ""
+        
+        while current_sig and current_sig in self.class_index:
+            depth += 1
+            paths = self.class_index.get(current_sig, [])
+            if paths:
+                content = self.read(paths[0])
+                if content:
+                    super_match = super_p.search(content)
+                    current_sig = super_match.group(1) if super_match else ""
+                else:
+                    break
+            else:
+                break
+        
+        return {
+            "super_class": super_class.group(1) if super_class else None,
+            "interfaces": interfaces,
+            "inheritance_depth": depth
+        }
+
+    def _analyze_call_statistics(self, code: str) -> Dict[str, Any]:
+        """Analisa estatísticas de chamadas de métodos."""
+        invoke_virtual = len(re.findall(r'invoke-virtual\s+', code))
+        invoke_static = len(re.findall(r'invoke-static\s+', code))
+        invoke_direct = len(re.findall(r'invoke-direct\s+', code))
+        invoke_super = len(re.findall(r'invoke-super\s+', code))
+        
+        new_instances = len(re.findall(r'new-instance\s+', code))
+        
+        return {
+            "virtual_calls": invoke_virtual,
+            "static_calls": invoke_static,
+            "direct_calls": invoke_direct,
+            "super_calls": invoke_super,
+            "new_instances": new_instances,
+            "total_calls": invoke_virtual + invoke_static + invoke_direct + invoke_super
+        }
+
+    def _analyze_security_patterns(self, code: str) -> List[Dict[str, Any]]:
+        """Analisa padrões de segurança no código."""
+        patterns = []
+        
+        crypto_patterns = [
+            (r'Ljavax/crypto/Cipher;', 'Crypto usage'),
+            (r'Ljava/security/MessageDigest;', 'Hash function'),
+            (r'Ljava/security/KeyStore;', 'KeyStore usage'),
+            (r'SecretKeySpec', 'Hardcoded key'),
+            (r'Landroid/util/Base64;->decode', 'Base64 decode'),
+        ]
+        
+        for pattern, description in crypto_patterns:
+            if re.search(pattern, code):
+                patterns.append({
+                    "type": "crypto",
+                    "pattern": description,
+                    "severity": "medium"
+                })
+        
+        perm_patterns = [
+            (r'Landroid/manifest/permission;', 'Permission check'),
+            (r'checkPermission', 'Runtime permission'),
+            (r'shouldShowRequestPermission', 'Permission rationale'),
+        ]
+        
+        for pattern, description in perm_patterns:
+            if re.search(pattern, code):
+                patterns.append({
+                    "type": "permission",
+                    "pattern": description,
+                    "severity": "low"
+                })
+        
+        return patterns
+
+    def _analyze_dex_summary(self, class_sig: str = None) -> Dict[str, Any]:
+        """Analisa estatísticas整体 do APK/DEX."""
+        total_classes = len(self.class_index)
+        
+        total_methods = 0
+        total_fields = 0
+        
+        method_p = re.compile(r'^\.method\s+', re.MULTILINE)
+        field_p = re.compile(r'^\.field\s+', re.MULTILINE)
+        
+        for sig, paths in self.class_index.items():
+            if paths:
+                content = self.read(paths[0])
+                if content:
+                    total_methods += len(method_p.findall(content))
+                    total_fields += len(field_p.findall(content))
+        
+        return {
+            "total_classes": total_classes,
+            "total_methods": total_methods,
+            "total_fields": total_fields,
+            "dex_files": len(self.smali_dirs)
+        }
+
     def generate_code_metrics(self, code: str, class_sig: str) -> Dict[str, Any]:
         """Gera métricas completas de código."""
         method_count = self._count_methods(code)
@@ -1303,6 +1445,11 @@ class SmaliScoutCore:
         complexity = self._analyze_complexity(code)
         dead_code = self._detect_dead_code(code, class_sig)
         large_methods = self._detect_large_methods(code)
+        field_analysis = self._analyze_fields(code)
+        inheritance = self._analyze_inheritance(code, class_sig)
+        call_stats = self._analyze_call_statistics(code)
+        security_patterns = self._analyze_security_patterns(code)
+        dex_summary = self._analyze_dex_summary(class_sig)
         
         total_instructions = sum(m.get("instructions", 0) for m in lines_per_method)
         avg_complexity = sum(c.get("complexity_score", 0) for c in complexity) / max(len(complexity), 1)
@@ -1310,21 +1457,29 @@ class SmaliScoutCore:
         return {
             "class": class_sig,
             "method_count": method_count,
+            "field_count": field_analysis,
             "parameter_count": param_count,
             "variable_count": var_count,
             "lines_per_method": lines_per_method,
             "complexity_analysis": complexity,
             "dead_code": dead_code,
             "large_methods": large_methods,
+            "inheritance": inheritance,
+            "call_statistics": call_stats,
+            "security_patterns": security_patterns,
+            "dex_summary": dex_summary,
             "summary": {
                 "total_methods": method_count["total"],
+                "total_fields": field_analysis["total"],
                 "total_parameters": sum(p["params"] for p in param_count),
                 "total_variables": sum(v["variables"] for v in var_count),
                 "total_instructions": total_instructions,
                 "avg_complexity": round(avg_complexity, 2),
                 "uncalled_methods_count": len(dead_code.get("uncalled_methods", [])),
                 "unused_fields_count": len(dead_code.get("unused_fields", [])),
-                "large_methods_count": len(large_methods)
+                "large_methods_count": len(large_methods),
+                "inheritance_depth": inheritance.get("inheritance_depth", 1),
+                "security_issues_count": len(security_patterns)
             }
         }
 
